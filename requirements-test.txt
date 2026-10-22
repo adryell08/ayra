@@ -1,0 +1,3 @@
+# Dependências de QA; scikit-image fornece a imagem de referência do YuNet.
+-r requirements.txt
+scikit-image

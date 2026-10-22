@@ -1,0 +1,8 @@
+pygame-ce>=2.5
+numpy>=1.26
+opencv-python>=4.8
+websockets>=13          # OpenAI Realtime por WebSocket (caminho principal)
+sounddevice>=0.4.6
+pyserial>=3.5             # painel LED via Arduino (aba Ajustes > Arduino)
+openai>=1.50,<2         # só o modo legado (--ia legado) usa o SDK
+pyttsx3>=2.90; sys_platform == "win32"

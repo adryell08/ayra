@@ -1,0 +1,30 @@
+# Ambientes Python e arquivos gerados.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+
+# Segredos e dados locais (RNF01 / privacidade): nunca versionar.
+.env
+.env.*
+!.env.example
+*.local.json
+logs/
+*.log
+*.tmp
+tmp*/
+*.part
+
+# Modelos de percepção extras: baixados por preparar_modelos.py (hash verificado).
+models/perception/
+
+# Restos do piloto (prévias antigas), fora do projeto.
+preview_v2.py
+preview_sharpness.py
+
+.DS_Store
+Thumbs.db
+Desktop.ini
