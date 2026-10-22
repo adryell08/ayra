@@ -1,0 +1,11 @@
+Etapa 2: controle remoto (sala do operador) e voz robotica
+
+- Sala do operador no navegador (HTTPS + PIN, WebRTC): video, audio,
+  falar pela Nuria (ao vivo ou texto), expressoes, olhar por clique.
+- Modos autonomo, assistido e teleoperado; operador tem prioridade.
+- Voz robotica (vocoder) igual para IA e operador; voz local gratuita.
+- Aviso "Operador conectado" com opcao liga/desliga em Ajustes.
+- Testes (test_operador.py, 37 verificacoes) e documentacao.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_018WS8cPwPVqmmUpbs9vs6aq

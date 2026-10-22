@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuria · Sala do operador</title>
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #ffffff; --text: #111216; --dim: #5b5e66; --line: #d9dadf;
+    --blue: #0a6cff; --green: #1f9d48; --red: #e5363d; --orange: #c75400; --chip: #eceef2;
+    --radius: 18px; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0c0e; --card: #1c1c1e; --text: #f5f5f7; --dim: #b8b8c0; --line: #3a3a3f;
+            --blue: #0a84ff; --green: #30d158; --red: #ff453a; --orange: #ff9f0a; --chip: #2c2c2e;
+            --shadow: none; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+  button, input, textarea { font: inherit; color: inherit; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 20px; position: sticky; top: 0; z-index: 2;
+    background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(16px); }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -.02em; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: var(--chip); font-weight: 600; font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
+  .dot.ok { background: var(--green); } .dot.warn { background: var(--orange); } .dot.err { background: var(--red); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 0 20px 24px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); margin: 0 0 10px; }
+  .stack { display: grid; gap: 16px; align-content: start; }
+  #videoBox { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 4/3; cursor: crosshair; }
+  #video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #videoHint { position: absolute; left: 12px; bottom: 12px; padding: 6px 10px; border-radius: 10px;
+    background: rgba(0,0,0,.55); color: #fff; font-size: 12px; }
+  #rec { position: absolute; left: 12px; top: 12px; display: none; }
+  #lookMark { position: absolute; width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%;
+    transform: translate(-50%,-50%); pointer-events: none; opacity: 0; transition: opacity .6s; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--chip); border-radius: 12px; padding: 3px; gap: 3px; }
+  .seg button { border: 0; background: transparent; border-radius: 10px; padding: 10px 6px; font-weight: 600; min-height: 44px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .modeHelp { color: var(--dim); font-size: 13px; margin: 8px 2px 0; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .btn { border: 0; border-radius: 12px; min-height: 44px; padding: 8px 10px; background: var(--chip); font-weight: 600; cursor: pointer; }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--blue); color: #fff; }
+  .btn.danger { background: var(--red); color: #fff; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  #talk { width: 100%; min-height: 64px; font-size: 18px; border-radius: 999px; user-select: none; touch-action: none; }
+  #talk.live { background: var(--red); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: transparent; }
+  .toggle { display: flex; justify-content: space-between; align-items: center; min-height: 44px; }
+  .switch { width: 51px; height: 31px; border-radius: 999px; background: var(--line); border: 0; position: relative; cursor: pointer; flex: none; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .switch[aria-checked="true"] { background: var(--green); }
+  .switch[aria-checked="true"]::after { transform: translateX(20px); }
+  .meter { height: 8px; border-radius: 4px; background: var(--chip); overflow: hidden; flex: 1; }
+  .meter > i { display: block; height: 100%; width: 0; background: var(--green); transition: width .08s; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: var(--dim); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+  #login { max-width: 420px; margin: 10vh auto; }
+  #login input { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; background: transparent; font-size: 20px; letter-spacing: .3em; text-align: center; }
+  #login input#nome { letter-spacing: normal; font-size: 16px; text-align: left; }
+  .error { color: var(--red); min-height: 1.4em; }
+  .hidden { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Nuria · Sala do operador</h1>
+  <span class="pill"><span class="dot" id="connDot"></span><span id="connText">Desconectado</span></span>
+</header>
+
+<section id="login" class="card">
+  <h2>Entrar</h2>
+  <p style="margin-top:0;color:var(--dim)">Digite o PIN que aparece no robô em <b>Ajustes → Controle remoto</b>.</p>
+  <div class="stack" style="gap:10px">
+    <input id="nome" placeholder="Seu nome (opcional)" autocomplete="name">
+    <input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    <button class="btn primary" id="enter">Conectar</button>
+    <div class="error" id="loginError"></div>
+  </div>
+</section>
+
+<main id="app" class="hidden">
+  <div class="stack">
+    <div id="videoBox" title="Clique para a Nuria olhar para esse ponto">
+      <video id="video" autoplay playsinline muted></video>
+      <span class="pill" id="rec"><span class="dot err"></span>AO VIVO · 5 FPS</span>
+      <span id="lookMark"></span>
+      <span id="videoHint">Clique na imagem para a Nuria olhar para lá</span>
+    </div>
+    <audio id="robotAudio" autoplay></audio>
+    <div class="card">
+      <h2>Modo de controle</h2>
+      <div class="seg" role="group" aria-label="Modo">
+        <button data-mode="autonomo" aria-pressed="true">Autônomo</button>
+        <button data-mode="assistido" aria-pressed="false">Assistido</button>
+        <button data-mode="teleoperado" aria-pressed="false">Teleoperado</button>
+      </div>
+      <p class="modeHelp" id="modeHelp"></p>
+    </div>
+    <div class="card">
+      <h2>Expressões</h2>
+      <div class="grid" id="expr">
+        <button class="btn" data-e="auto">Automático</button>
+        <button class="btn" data-e="happy">Feliz</button>
+        <button class="btn" data-e="sad">Triste</button>
+        <button class="btn" data-e="angry">Bravo</button>
+        <button class="btn" data-e="surprised">Surpreso</button>
+        <button class="btn" data-e="wide">Curioso</button>
+        <button class="btn" data-e="sleepy">Sonolento</button>
+        <button class="btn" data-e="wink">Piscadela</button>
+        <button class="btn" data-e="cry">Chorar</button>
+        <button class="btn" data-e="plead">Súplica</button>
+        <button class="btn" data-e="blink">Piscar</button>
+        <button class="btn" data-e="center">Olhar à frente</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <h2>Sua voz</h2>
+      <button class="btn primary" id="talk">Segure para falar</button>
+      <div class="row" style="margin-top:10px"><span style="font-size:13px;color:var(--dim);width:90px">Seu microfone</span><div class="meter"><i id="micMeter"></i></div></div>
+      <div class="row" style="margin-top:6px"><span style="font-size:13px;color:var(--dim);width:90px">Áudio do robô</span><div class="meter"><i id="robotMeter"></i></div></div>
+      <p class="modeHelp">Atalho: segure a barra de espaço. A Nuria mexe a boca com a sua voz.</p>
+    </div>
+    <div class="card">
+      <h2>A Nuria diz</h2>
+      <textarea id="sayText" placeholder="Digite uma frase…"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="say" style="flex:1">Falar frase</button>
+        <button class="btn danger" id="stop">Interromper</button>
+      </div>
+      <p class="modeHelp" id="sayHelp"></p>
+    </div>
+    <div class="card">
+      <div class="toggle"><span>Visão da IA (enviar imagem)</span><button class="switch" id="vision" role="switch" aria-checked="true"></button></div>
+      <div class="toggle"><span>Voz robótica (IA e operador iguais)</span><button class="switch" id="robotVoice" role="switch" aria-checked="false"></button></div>
+    </div>
+    <div class="card">
+      <h2>Estado</h2>
+      <dl class="kv">
+        <dt>Nuria</dt><dd id="st">—</dd>
+        <dt>Pergunta</dt><dd id="q">—</dd>
+        <dt>Resposta</dt><dd id="a">—</dd>
+        <dt>Expressão</dt><dd id="emo">—</dd>
+        <dt>Rostos</dt><dd id="faces">—</dd>
+        <dt>Latência</dt><dd id="rtt">—</dd>
+      </dl>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const MODE_HELP = {
+  autonomo: "A IA conversa sozinha. Você assiste e pode intervir com expressões, olhar e frases.",
+  assistido: "A IA conversa; suas frases saem pela voz da IA e sua voz ao vivo interrompe a resposta.",
+  teleoperado: "A IA fica em silêncio. Só você fala pela Nuria (voz ao vivo ou frase digitada, voz local gratuita).",
+};
+const STATE = { idle: "Pronta", connecting: "Conectando…", listening: "Ouvindo", capturing: "Capturando imagem",
+  thinking: "Pensando", speaking: "Falando", error: "Erro" };
+let pc = null, dc = null, micTrack = null, pttOn = false, mode = "autonomo", rtt = null;
+
+function setConn(text, cls) { $("connText").textContent = text; $("connDot").className = "dot " + (cls || ""); }
+function send(obj) { if (dc && dc.readyState === "open") dc.send(JSON.stringify(obj)); }
+
+function meter(stream, el) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream), an = ctx.createAnalyser();
+    an.fftSize = 512; src.connect(an);
+    const buf = new Uint8Array(an.fftSize);
+    (function tick() {
+      an.getByteTimeDomainData(buf);
+      let s = 0; for (const v of buf) { const d = (v - 128) / 128; s += d * d; }
+      el.style.width = Math.min(100, Math.sqrt(s / buf.length) * 400) + "%";
+      requestAnimationFrame(tick);
+    })();
+  } catch (e) { /* medidor é opcional */ }
+}
+
+async function connect() {
+  $("loginError").textContent = "";
+  const pin = $("pin").value.trim();
+  if (!/^\d{6}$/.test(pin)) { $("loginError").textContent = "O PIN tem 6 dígitos."; return; }
+  $("enter").disabled = true; setConn("Conectando…", "warn");
+  pc = new RTCPeerConnection();
+  dc = pc.createDataChannel("controle");
+  dc.onopen = () => { setConn("Conectado", "ok"); ping(); };
+  dc.onclose = () => setConn("Desconectado", "err");
+  dc.onmessage = (ev) => onMessage(JSON.parse(ev.data));
+  let micOk = false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    micTrack = stream.getAudioTracks()[0]; micTrack.enabled = false;
+    pc.addTrack(micTrack, stream); meter(stream, $("micMeter")); micOk = true;
+  } catch (e) {
+    pc.addTransceiver("audio", { direction: "recvonly" });
+  }
+  pc.addTransceiver("video", { direction: "recvonly" });
+  pc.ontrack = (ev) => {
+    if (ev.track.kind === "video") { $("video").srcObject = new MediaStream([ev.track]); $("rec").style.display = "inline-flex"; }
+    else { const s = new MediaStream([ev.track]); $("robotAudio").srcObject = s; meter(s, $("robotMeter")); }
+  };
+  pc.onconnectionstatechange = () => {
+    if (["failed", "disconnected", "closed"].includes(pc.connectionState)) setConn("Conexão perdida — recarregue a página", "err");
+  };
+  await pc.setLocalDescription(await pc.createOffer());
+  await new Promise((resolve) => {                       // rede local: candidatos saem em milissegundos
+    if (pc.iceGatheringState === "complete") return resolve();
+    const done = () => { if (pc.iceGatheringState === "complete") resolve(); };
+    pc.addEventListener("icegatheringstatechange", done); setTimeout(resolve, 2500);
+  });
+  let res;
+  try {
+    res = await fetch("/offer", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, pin, nome: $("nome").value }) });
+  } catch (e) { res = null; }
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (!res || !res.ok) {
+    $("loginError").textContent = data.erro || "Robô fora do ar. Confira o endereço e a rede.";
+    setConn("Desconectado", "err"); $("enter").disabled = false; pc.close(); return;
+  }
+  await pc.setRemoteDescription(data);
+  $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  if (!micOk) { $("talk").disabled = true; $("talk").textContent = "Microfone indisponível (permita no navegador)"; }
+  setMode("autonomo", false);
+}
+
+function ping() {
+  if (!dc || dc.readyState !== "open") return;
+  send({ tipo: "ping", t: performance.now(), rtt });
+  setTimeout(ping, 2000);
+}
+
+function onMessage(m) {
+  if (m.tipo === "pong") { rtt = Math.round(performance.now() - m.t); $("rtt").textContent = rtt + " ms"; return; }
+  if (m.tipo !== "estado") return;
+  $("st").textContent = (STATE[m.estado] || m.estado) + (m.mensagem ? " · " + m.mensagem : "");
+  $("q").textContent = m.pergunta || "—"; $("a").textContent = m.resposta || "—";
+  $("emo").textContent = m.expressao || "—"; $("faces").textContent = m.rostos ?? "—";
+  if (m.modo && m.modo !== mode) setMode(m.modo, false);
+  $("vision").setAttribute("aria-checked", String(!!m.visao));
+  $("robotVoice").setAttribute("aria-checked", String(!!m.voz_robotica));
+}
+
+function setMode(m, notify = true) {
+  mode = m;
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  $("modeHelp").textContent = MODE_HELP[m];
+  $("sayHelp").textContent = m === "teleoperado" ? "Sai pela voz local do robô (gratuita)." : "A IA fala a frase com a voz dela.";
+  if (notify) send({ tipo: "mode", modo: m });
+}
+
+function talk(on) {
+  if (!micTrack || pttOn === on) return;
+  pttOn = on; micTrack.enabled = on;
+  $("talk").classList.toggle("live", on); $("talk").textContent = on ? "Falando… solte para parar" : "Segure para falar";
+  send({ tipo: "ptt", ligado: on });
+}
+
+$("enter").onclick = connect;
+$("pin").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+document.querySelectorAll(".seg button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+document.querySelectorAll("#expr button").forEach((b) => (b.onclick = () => send({ tipo: "expression", nome: b.dataset.e })));
+$("say").onclick = () => { const t = $("sayText").value.trim(); if (t) { send({ tipo: "say", texto: t }); $("sayText").value = ""; } };
+$("stop").onclick = () => send({ tipo: "interrupt" });
+for (const id of ["vision", "robotVoice"]) {
+  $(id).onclick = () => {
+    const on = $(id).getAttribute("aria-checked") !== "true";
+    $(id).setAttribute("aria-checked", String(on));
+    send(id === "vision" ? { tipo: "vision", ligado: on } : { tipo: "robot_voice", ligado: on });
+  };
+}
+const talkBtn = $("talk");
+talkBtn.addEventListener("pointerdown", (e) => { talk(true); try { talkBtn.setPointerCapture(e.pointerId); } catch (_) {} });
+talkBtn.addEventListener("pointerup", () => talk(false));
+talkBtn.addEventListener("pointercancel", () => talk(false));
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !e.repeat && document.activeElement.tagName !== "TEXTAREA" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); talk(true); }
+});
+document.addEventListener("keyup", (e) => { if (e.code === "Space") talk(false); });
+window.addEventListener("blur", () => talk(false));
+$("videoBox").addEventListener("click", (e) => {
+  const r = $("videoBox").getBoundingClientRect();
+  const u = (e.clientX - r.left) / r.width, v = (e.clientY - r.top) / r.height;
+  // a imagem da câmera não é espelhada; o olhar da Nuria usa a vista espelhada (ela está de frente para a cena)
+  send({ tipo: "look", gx: -(u * 2 - 1), gy: v * 2 - 1 });
+  const m = $("lookMark"); m.style.left = u * 100 + "%"; m.style.top = v * 100 + "%"; m.style.opacity = 1;
+  setTimeout(() => (m.style.opacity = 0), 900);
+});
+</script>
+</body>
+</html>
