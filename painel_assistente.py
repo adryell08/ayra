@@ -1,4 +1,4 @@
-"""Coluna "Nuria" (pygame): estado, imagem capturada, pergunta, resposta e botão de falar.
+"""Coluna "Ayra" (pygame): estado, câmera ao vivo, foto enviada, pergunta, resposta e botão de falar.
 
 Segue as HIG: estado com texto + forma (nunca só cor), alvos >= 44 pt, respiro de 16 pt,
 feedback imediato ao pressionar, confirmação ao soltar sobre o mesmo alvo, Reduzir Movimento
@@ -48,6 +48,10 @@ class AssistantPanel:
         self._fade = 1.0
         self._time = 0.0
         self.visible = True
+        self.live = (None, 0)          # (miniatura BGR ao vivo, sequência), entregue pelo laço principal
+        self._live_seq = -1
+        self._live_surf: Optional[pygame.Surface] = None
+        self._sent_at = -1e9           # quando a última foto foi enviada (miniatura "Enviada" no canto)
 
     # ---- geometria -----------------------------------------------------------
     def reserve(self, screen: pygame.Surface, s: float) -> int:
@@ -193,7 +197,7 @@ class AssistantPanel:
         x, y, w = inner.x, inner.y, inner.w
 
         # cabeçalho: nome + estado (texto + forma)
-        title = r._text("title", "Nuria", sc.text)
+        title = r._text("title", "Ayra", sc.text)
         scr.blit(title, (x, y))
         label, mk, colkey = STATE_TEXT.get(snap.state, STATE_TEXT["idle"])
         if snap.state == "idle" and snap.message_kind == "warning":
@@ -215,8 +219,16 @@ class AssistantPanel:
         scr.blit(r._text("footnote", r._fit("footnote", sub, w), sc.text_dim), (x, y))
         y += int(26 * s)
 
-        # imagem capturada
-        scr.blit(r._text("section", "IMAGEM CAPTURADA" if snap.vision else "VISÃO PAUSADA", sc.text_dim), (x, y))
+        # câmera ao vivo (só nesta tela) + foto enviada à IA no canto
+        frame, seq = self.live
+        if frame is None:
+            self._live_surf, self._live_seq = None, -1
+        elif seq != self._live_seq:
+            self._live_seq, self._live_surf = seq, self._surface_from(frame)
+        live = self._live_surf is not None
+        section = ("CÂMERA AO VIVO" if snap.vision else "CÂMERA AO VIVO · VISÃO PAUSADA") if live else \
+            ("IMAGEM CAPTURADA" if snap.vision else "VISÃO PAUSADA")
+        scr.blit(r._text("section", section, sc.text_dim), (x, y))
         y += int(22 * s)
         img_h = int(w * 9 / 16)
         avail = self.mic.top - y - int(190 * s)
@@ -227,8 +239,46 @@ class AssistantPanel:
             self._image_version = snap.image_version
             self._image_surf = self._surface_from(snap.image)
             self._fade = 0.0 if not reduce_motion else 1.0
+            self._sent_at = self._time
         pygame.draw.rect(scr, mix(sc.chip, sc.text, .07), img_rect, border_radius=radius)
-        if self._image_surf is not None and snap.vision:
+        if live:
+            iw, ih = self._live_surf.get_size()
+            k = max(img_rect.w / iw, img_rect.h / ih)                 # preenche o quadro (corta as sobras)
+            big = pygame.transform.smoothscale(self._live_surf, (max(1, int(iw * k)), max(1, int(ih * k))))
+            crop = big.subsurface(pygame.Rect((big.get_width() - img_rect.w) // 2, (big.get_height() - img_rect.h) // 2,
+                                              img_rect.w, img_rect.h))
+            view = self._rounded(crop, radius)
+            if not snap.vision:
+                view.set_alpha(150)
+            scr.blit(view, img_rect)
+            chip = r._text("caption", "Ao vivo", (255, 255, 255))
+            cr = pygame.Rect(img_rect.x + int(8 * s), img_rect.y + int(8 * s), chip.get_width() + int(26 * s),
+                             max(int(24 * s), chip.get_height() + int(6 * s)))
+            pill = pygame.Surface(cr.size, pygame.SRCALPHA)
+            pygame.draw.rect(pill, (0, 0, 0, 150), pill.get_rect(), border_radius=cr.h // 2)
+            scr.blit(pill, cr)
+            pygame.draw.circle(scr, pal["red"], (cr.x + int(11 * s), cr.centery), max(3, int(4 * s)))
+            scr.blit(chip, (cr.x + int(19 * s), cr.centery - chip.get_height() // 2))
+            recent = self._time - self._sent_at < 8.0 or snap.state in ("capturing", "thinking", "speaking")
+            if self._image_surf is not None and snap.vision and recent:
+                tw = int(img_rect.w * .36)
+                th_ = int(tw * self._image_surf.get_height() / self._image_surf.get_width())
+                thumb = pygame.transform.smoothscale(self._image_surf, (tw, th_))
+                tr = thumb.get_rect(bottomright=(img_rect.right - int(8 * s), img_rect.bottom - int(8 * s)))
+                self._fade = min(1.0, self._fade + dt / 0.25)
+                frame_r = tr.inflate(int(4 * s), int(4 * s))
+                pygame.draw.rect(scr, (255, 255, 255), frame_r, border_radius=int(8 * s))
+                t2 = self._rounded(thumb, int(6 * s))
+                t2.set_alpha(int(255 * self._fade))
+                scr.blit(t2, tr)
+                lab = r._text("caption", "Enviada", (255, 255, 255))
+                lr = pygame.Rect(0, 0, lab.get_width() + int(12 * s), lab.get_height() + int(2 * s))
+                lr.bottomleft = (tr.x + int(4 * s), tr.bottom - int(4 * s))
+                bg = pygame.Surface(lr.size, pygame.SRCALPHA)
+                pygame.draw.rect(bg, (0, 0, 0, 160), bg.get_rect(), border_radius=lr.h // 2)
+                scr.blit(bg, lr)
+                scr.blit(lab, (lr.x + int(6 * s), lr.y + int(1 * s)))
+        elif self._image_surf is not None and snap.vision:
             iw, ih = self._image_surf.get_size()
             k = min(img_rect.w / iw, img_rect.h / ih)
             fit = pygame.transform.smoothscale(self._image_surf, (max(1, int(iw * k)), max(1, int(ih * k))))
@@ -250,7 +300,11 @@ class AssistantPanel:
             pygame.draw.rect(flash, (255, 255, 255, a), flash.get_rect(), border_radius=radius)
             scr.blit(flash, img_rect)
         y = img_rect.bottom + int(6 * s)
-        if self._image_surf is not None and snap.vision:
+        if live:
+            note = ("Ao vivo só nesta tela · a IA recebe 1 foto por pergunta" if snap.vision
+                    else "Visão pausada: nada é enviado à IA")
+            scr.blit(r._text("caption", r._fit("caption", note, w), sc.text_dim), (x, y))
+        elif self._image_surf is not None and snap.vision:
             scr.blit(r._text("caption", r._fit("caption", "Enviada à IA só para esta pergunta · não é salva", w), sc.text_dim), (x, y))
         y += int(26 * s)
 

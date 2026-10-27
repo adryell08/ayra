@@ -1,7 +1,7 @@
 """Microfone e alto-falante (sounddevice/PortAudio), sem gravar nada em disco.
 
 `Recorder.record` capta a pergunta até o usuário parar, ou sozinho após silêncio (VAD por energia).
-`Player.play` toca PCM e expõe o envelope de volume para a boca da Nuria acompanhar a fala.
+`Player.play` toca PCM e expõe o envelope de volume para a boca da Ayra acompanhar a fala.
 Erros de dispositivo viram `VoiceError` com mensagem em pt-BR (RNF02).
 """
 from __future__ import annotations

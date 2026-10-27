@@ -1,5 +1,5 @@
 @echo off
-REM Nuria - grava o firmware do painel de LEDs no Arduino Uno (uma vez so).
+REM Ayra - grava o firmware do painel de LEDs no Arduino Uno (uma vez so).
 REM Usa o arduino-cli; se nao estiver instalado, instala pelo winget.
 chcp 65001 >nul
 cd /d "%~dp0"
@@ -21,8 +21,8 @@ if "%PORTA%"=="" (
   echo Arduino nao encontrado. Conecte o cabo USB ou informe a porta: gravar_arduino.bat COM4
   pause & exit /b 1
 )
-echo Gravando na porta %PORTA% (feche a Nuria e o Monitor Serial antes)...
+echo Gravando na porta %PORTA% (feche a Ayra e o Monitor Serial antes)...
 arduino-cli compile --fqbn arduino:avr:uno arduino\nuria_leds || (pause & exit /b 1)
 arduino-cli upload -p %PORTA% --fqbn arduino:avr:uno arduino\nuria_leds || (pause & exit /b 1)
-echo Pronto! O painel deve mostrar duas "pupilas" acesas. Abra a Nuria e ligue em Ajustes ^> Arduino.
+echo Pronto! O painel deve mostrar duas "pupilas" acesas. Abra a Ayra e ligue em Ajustes ^> Arduino.
 pause

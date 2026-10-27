@@ -1,4 +1,4 @@
-# Nuria — Arquitetura, requisitos e fluxo de dados
+# Ayra — Arquitetura, requisitos e fluxo de dados
 
 ## 1. Objetivo
 
@@ -63,7 +63,7 @@ pendente e `conversation.item.truncate(audio_end_ms = amostras tocadas)`. Funç�
 
 ## 6. Extensões
 
-- **Aba API** (Ajustes → API da OpenAI): chave colada pela interface e gravada no `.env` (mascarada na tela), teste de
+- **Aba API** (Ajustes → API): chave colada pela interface e gravada no `.env` (mascarada na tela), teste de
   conexão, troca de modelo/voz; a sessão Realtime se refaz sozinha.
 - **Visão pausada** (tecla V): conversa sem enviar imagens; o rastreamento local continua.
 - **Painel físico** (Ajustes → Arduino): os mesmos olhos em 32×8 (16×8 por olho) num Arduino Uno + 4× MAX7219,
@@ -71,4 +71,19 @@ pendente e `conversation.item.truncate(audio_end_ms = amostras tocadas)`. Funç�
 - **Controle remoto (etapa 2)**: sala do operador no navegador (aiohttp + aiortc/WebRTC, HTTPS + PIN) com modos
   autônomo/assistido/teleoperado, voz ao vivo, frases, expressões e olhar; voz robótica comum à IA e ao operador.
   Detalhes em [`CONTROLE_REMOTO.md`](CONTROLE_REMOTO.md).
+- **Corpo 3D** (F3 ou Ajustes → Corpo 3D): modelo feito em Blender (`blender/nuria_3d.py` → `models/nuria3d.npz`), peças
+  rígidas presas a 29 pivôs (cabeça, ombros, cotovelos, punhos, dedos). `gestos.py` descreve cada gesto pela posição do punho,
+  direção dos dedos/palma e dobra dos dedos; uma cinemática inversa de dois ossos gera as matrizes. `corpo3d.py` desenha com
+  OpenGL 3.3 (moderngl) fora da tela e projeta no visor o mesmo rosto de LEDs do 2D. Gestos chegam da IA (parâmetro `gesto`
+  da função `expressar`), da sala do operador e do menu; sem OpenGL, o app fica no 2D e avisa.
+- **Câmera ao vivo** na coluna (miniatura ~15 quadros/s, só em memória, só enquanto a tela pede); o envio à IA segue igual.
+- **Dedo do meio sem IA**: palma (MediaPipe Palm) → recorte girado → 21 pontos (MediaPipe Hand Landmark, OpenCV Zoo) →
+  classificação por distâncias (`gestures.classify_hand`) → confirmação em 2 leituras (`SignReactor`) → rosto bravo e,
+  com o corpo 3D, o mesmo gesto de volta. O mesmo caminho reconhece joinha, paz e amor e OK; aceno vira tchau.
+- **Gemini Live** (`gemini_live.py`): adaptador que fala o protocolo `BidiGenerateContent` (setup, realtimeInput com
+  activityStart/activityEnd, clientContent, toolResponse) e devolve eventos no formato da Realtime; o `RealtimeAssistant`
+  não muda. A pergunta falada é guardada e enviada com a foto no pedido de resposta (16 kHz); áudio volta a 24 kHz.
+- **Economia**: 1 frase de até ~15 palavras, `max_output_tokens`/`maxOutputTokens` (350 por padrão) e foto de 512 px.
+- **Robustez**: cada quadro do laço principal é protegido (erro → `logs/erros.log` + aviso); `faulthandler` grava falhas
+  nativas em `logs/falhas.log`; o vídeo do operador lê o último quadro da câmera sem disputar a foto da pergunta.
 

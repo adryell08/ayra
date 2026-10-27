@@ -27,6 +27,15 @@ DEFAULTS = {
     "NURIA_RACIOCINIO": "low",                          # minimal|low|medium|high; vazio = padrão do modelo
     "NURIA_REALTIME_URL": "wss://api.openai.com/v1/realtime?model={model}",
     "NURIA_VOZ_ROBOTICA": "0",                          # 1 = filtro robótico na voz da IA e do operador
+    # Provedor da conversa em tempo real: openai (Realtime) ou gemini (Gemini Live)
+    "NURIA_PROVEDOR": "openai",
+    "NURIA_MODELO_GEMINI": "gemini-3.8-live",
+    "NURIA_VOZ_GEMINI": "Kore",
+    "NURIA_GEMINI_URL": "wss://generativelanguage.googleapis.com/ws/"
+                        "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
+    # Economia: teto de tokens por resposta (áudio incluso; ~20–25 tokens por segundo de fala) e lado da foto
+    "NURIA_MAX_TOKENS": "350",                          # 0 = sem limite
+    "NURIA_IMAGEM_LADO": "512",                         # px do maior lado da foto enviada (768 = mais detalhe)
 }
 
 
@@ -43,6 +52,8 @@ def read_env_file(path: Path = ENV_FILE) -> Dict[str, str]:
         key, value = line.split("=", 1)
         key = key.strip().removeprefix("export ").strip()
         value = value.strip()
+        if " #" in value or "\t#" in value:                      # comentário no fim da linha (como no .env.example)
+            value = value.split("#", 1)[0].strip() if not value.startswith(("'", '"')) else value
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
         values[key] = value
@@ -64,13 +75,39 @@ class AIConfig:
     reasoning: str = DEFAULTS["NURIA_RACIOCINIO"]
     realtime_url: str = DEFAULTS["NURIA_REALTIME_URL"]
     robot_voice: bool = False
+    provider: str = "openai"                             # openai | gemini
+    gemini_key: Optional[str] = None
+    gemini_model: str = DEFAULTS["NURIA_MODELO_GEMINI"]
+    gemini_voice: str = DEFAULTS["NURIA_VOZ_GEMINI"]
+    gemini_url: str = DEFAULTS["NURIA_GEMINI_URL"]
+    max_tokens: int = 350                                # 0 = sem limite
+    image_side: int = 512
 
     @property
     def configured(self) -> bool:
+        """Chave da OpenAI (Realtime e modo legado)."""
         return bool(self.api_key) and not self.api_key.startswith("sk-COLOQUE")
 
+    @property
+    def gemini_configured(self) -> bool:
+        return bool(self.gemini_key) and not self.gemini_key.startswith("COLOQUE")
+
+    @property
+    def live_configured(self) -> bool:
+        """Chave do provedor escolhido para a conversa em tempo real."""
+        return self.gemini_configured if self.provider == "gemini" else self.configured
+
+    @property
+    def live_model(self) -> str:
+        return self.gemini_model if self.provider == "gemini" else self.realtime_model
+
+    @property
+    def live_label(self) -> str:
+        return "Gemini Live" if self.provider == "gemini" else "OpenAI Realtime"
+
     def __repr__(self) -> str:                      # nunca vaza a chave em logs
-        return (f"AIConfig(chave={'definida' if self.configured else 'ausente'}, realtime={self.realtime_model}, "
+        return (f"AIConfig(provedor={self.provider}, chave={'definida' if self.configured else 'ausente'}, "
+                f"gemini={'definida' if self.gemini_configured else 'ausente'}, realtime={self.realtime_model}, "
                 f"voz_realtime={self.realtime_voice}, visao={self.vision_model}, stt={self.stt_model}, "
                 f"tts={self.tts_model}, voz={self.voice})")
 
@@ -85,10 +122,21 @@ def load(path: Path = ENV_FILE, environ=None) -> AIConfig:
     except ValueError:
         timeout = 30.0
     key = (env.get("OPENAI_API_KEY") or "").strip() or None
+    gkey = (env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY") or "").strip() or None
+
+    def integer(name, low, high):
+        try:
+            return max(low, min(high, int(float(get(name)))))
+        except ValueError:
+            return int(DEFAULTS[name])
+    provider = get("NURIA_PROVEDOR").strip().lower()
     return AIConfig(key, get("NURIA_MODELO_VISAO"), get("NURIA_MODELO_STT"), get("NURIA_MODELO_TTS"),
                     get("NURIA_VOZ"), timeout, get("NURIA_MODELO_REALTIME"), get("NURIA_VOZ_REALTIME"),
                     raw("NURIA_TRANSCRICAO"), raw("NURIA_RUIDO"), raw("NURIA_RACIOCINIO"), get("NURIA_REALTIME_URL"),
-                    get("NURIA_VOZ_ROBOTICA").strip().lower() in ("1", "sim", "true", "on"))
+                    get("NURIA_VOZ_ROBOTICA").strip().lower() in ("1", "sim", "true", "on"),
+                    provider if provider in ("openai", "gemini") else "openai", gkey, get("NURIA_MODELO_GEMINI"),
+                    get("NURIA_VOZ_GEMINI"), get("NURIA_GEMINI_URL"), integer("NURIA_MAX_TOKENS", 0, 4096),
+                    integer("NURIA_IMAGEM_LADO", 256, 1536))
 
 
 # ---------------------------------------------------------------------------
@@ -96,17 +144,25 @@ def load(path: Path = ENV_FILE, environ=None) -> AIConfig:
 # ---------------------------------------------------------------------------
 REALTIME_MODELS = ("gpt-realtime-2.1", "gpt-realtime-2.1-mini")
 REALTIME_VOICES = ("marin", "cedar", "coral", "sage", "alloy", "ash", "ballad", "echo", "shimmer", "verse")
+GEMINI_MODELS = ("gemini-3.8-live", "gemini-3.1-flash-live-preview")
+GEMINI_VOICES = ("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Charon", "Fenrir", "Orus")
+TOKEN_LIMITS = (("Curtíssimas", 220), ("Curtas", 350), ("Normais", 700), ("Sem limite", 0))
 
 
 def mask(key: Optional[str]) -> str:
     """Nunca mostra a chave: só o prefixo e os 4 últimos caracteres."""
     if not key:
         return "não configurada"
-    return (key[:3] if key.startswith("sk-") else "") + "…" + key[-4:]
+    prefix = key[:3] if key.startswith("sk-") else (key[:4] if key.startswith("AIza") else "")
+    return prefix + "…" + key[-4:]
 
 
-def looks_valid(key: str) -> bool:
-    return key.startswith("sk-") and len(key) >= 20 and not any(c.isspace() for c in key)
+def looks_valid(key: str, kind: str = "openai") -> bool:
+    if any(c.isspace() for c in key):
+        return False
+    if kind == "gemini":
+        return key.startswith("AIza") and len(key) >= 30
+    return key.startswith("sk-") and len(key) >= 20
 
 
 def set_env_values(updates: Dict[str, Optional[str]], path: Path = ENV_FILE) -> None:
@@ -115,7 +171,7 @@ def set_env_values(updates: Dict[str, Optional[str]], path: Path = ENV_FILE) -> 
     try:
         lines = path.read_text(encoding="utf-8-sig").splitlines()
     except OSError:
-        lines = ["# Configuração local da Nuria. Este arquivo NUNCA vai para o Git."]
+        lines = ["# Configuração local da Ayra. Este arquivo NUNCA vai para o Git."]
     pending = dict(updates)
     out = []
     for line in lines:
@@ -135,8 +191,9 @@ def set_env_values(updates: Dict[str, Optional[str]], path: Path = ENV_FILE) -> 
     tmp.replace(path)
 
 
-def key_source(environ=None) -> str:
+def key_source(environ=None, name: str = "OPENAI_API_KEY") -> str:
     """De onde vem a chave em uso: 'windows' (variável de ambiente, tem prioridade), 'env' ou ''."""
-    if (os.environ if environ is None else environ).get("OPENAI_API_KEY"):
+    names = (name, "GOOGLE_API_KEY") if name == "GEMINI_API_KEY" else (name,)
+    if any((os.environ if environ is None else environ).get(n) for n in names):
         return "windows"
-    return "env" if read_env_file().get("OPENAI_API_KEY") else ""
+    return "env" if any(read_env_file().get(n) for n in names) else ""

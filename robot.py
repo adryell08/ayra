@@ -24,7 +24,7 @@ from actions import ACTIONS, ActionPlayer
 from face import render_field
 from gaze import GazeController
 from perception import VisualReactor
-from gestures import HandReactor, ObjectReactor
+from gestures import SIGNS, HandReactor, ObjectReactor, SignReactor
 from tracker import Detection, FaceTracker, Track
 
 REFLEX_GROWTH_SPEED = 0.60       # altura normalizada por segundo, no mesmo ID
@@ -74,6 +74,7 @@ class Robot:
         self.features = dict(DEFAULT_FEATURES)
         self.perception = VisualReactor(sensitivity)
         self.hands = HandReactor(sensitivity)
+        self.signs = SignReactor(sensitivity)
         self.objects = ObjectReactor(sensitivity)
 
     # ---- controles públicos (teclado hoje, IA amanhã) ------------------------
@@ -194,6 +195,14 @@ class Robot:
                                          event.score, now)
             if observations is not None:
                 hand_events = self.hands.update(observations, now) if self.features["hands"] and (fresh is None or "hand" in fresh) else []
+                allowed = set()
+                if self.features["hands"]:
+                    if self.features.get("middle_finger", True):
+                        allowed.add("middle_finger")
+                    if self.features.get("gesture_reply", True):
+                        allowed.update(("thumbs_up", "peace", "ok_sign"))
+                if any(o.kind in SIGNS for o in observations):
+                    hand_events = [e for e in hand_events if e.kind == "hand_threat"]   # gesto com a mão não é "oi"
                 for event in hand_events:
                     if event.kind in ("wave", "palm_hello"):
                         if self.perception.last_scores.get("tongue_out", 0.) < .6 / self.sensitivity:
@@ -203,6 +212,11 @@ class Robot:
                         if self.blink(reflex=True):
                             self.expr.recoil_now()
                             self._record_trigger(event.kind, event.score, now)
+                if allowed and (fresh is None or "hand" in fresh):
+                    for event in self.signs.update(observations, now, allowed):
+                        # sem IA: reação local no rosto; o app devolve o mesmo gesto no corpo 3D
+                        self.expr.pulse("angry" if event.kind == "middle_finger" else "happy", 2.6)
+                        self._record_trigger(event.kind, event.score, now)
                 if self.features["objects"] and (fresh is None or set(fresh) & {"dog", "cat", "bottle", "cup"}):
                     for event in self.objects.update(observations, now):
                         if self.perception.last_scores.get("tongue_out", 0.) < .6 / self.sensitivity:

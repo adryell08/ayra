@@ -1,4 +1,4 @@
-"""Orquestra a pergunta da Nuria: ouvir → capturar imagem → transcrever → interpretar → falar.
+"""Orquestra a pergunta da Ayra: ouvir → capturar imagem → transcrever → interpretar → falar.
 
 Tudo roda numa thread de trabalho: o laço da interface só lê o estado (RNF03).
 Nenhuma falha encerra o app: cada etapa vira um estado de erro/aviso com mensagem (RNF02).
@@ -29,6 +29,8 @@ class Snapshot:
     emotion: str = "neutral"
     action: str = ""                 # simulação pedida pela IA: cry, plead, wink
     expr_version: int = 0            # muda quando a IA pede nova expressão (tempo real)
+    gesture: str = ""                # gesto do corpo 3D (gestos.GESTURES), pedido pela IA ou pelo operador
+    gesture_version: int = 0         # muda a cada pedido de gesto (o mesmo gesto pode repetir)
     vision: bool = True              # False = visão pausada: perguntas vão sem imagem
     mode: str = "autonomo"           # autonomo | assistido | teleoperado (controle remoto, etapa 2)
     operator: str = ""               # operador remoto conectado ("" = nenhum)
@@ -74,6 +76,17 @@ class Assistant:
     @property
     def state(self) -> str:
         return self._snap.state
+
+    def request_gesture(self, name: str) -> bool:
+        """Pede um gesto ao corpo 3D (no 2D vira aviso). Nome inválido é ignorado."""
+        from gestos import GESTURES
+        name = str(name or "").strip().lower()
+        if name not in GESTURES:
+            return False
+        with self._lock:
+            self._snap.gesture = name
+            self._snap.gesture_version += 1
+        return True
 
     def set_vision(self, on: bool) -> None:
         """Pausa/retoma o envio de imagens (o rastreamento local do rosto continua)."""

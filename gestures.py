@@ -76,6 +76,76 @@ class HandReactor:
         return []
 
 
+SIGNS = ("middle_finger", "thumbs_up", "peace", "ok_sign")   # gestos que a Ayra reconhece e devolve
+
+
+def classify_hand(points):
+    """Classifica 21 pontos da mão (MediaPipe) em coordenadas da imagem (y para baixo).
+
+    Dedos: só distâncias (vale para mão girada ou espelhada). Joinha usa a direção do polegar (para cima).
+    Retorna (rótulo, confiança 0..1): middle_finger, peace, ok_sign, thumbs_up, fist, open, other.
+    """
+    import numpy as np
+    p = np.asarray(points, dtype=float)[:, :2]
+    wrist = p[0]
+    scale = float(np.linalg.norm(p[9] - wrist)) or 1.0
+    dist = lambda a, b: float(np.linalg.norm(p[a] - p[b]))
+
+    def finger(mcp, pip, dip, tip):
+        path = dist(pip, mcp) + dist(dip, pip) + dist(tip, dip)
+        straight = dist(tip, mcp) / max(path, 1e-6)                  # 1 = reto, ~0.3 = dobrado
+        reach = (dist(tip, 0) - dist(pip, 0)) / scale
+        return straight, reach
+
+    idx, mid, ring, pinky = (finger(*range(b, b + 4)) for b in (5, 9, 13, 17))
+    extended = lambda f: f[0] > .80 and f[1] > .25
+    folded = lambda f: f[0] < .72 or f[1] < .05
+    thumb_path = dist(3, 2) + dist(4, 3)
+    thumb_out = (dist(4, 2) / max(thumb_path, 1e-6) > .85 and dist(4, 5) / scale > .45 and dist(4, 0) > dist(3, 0))
+    if extended(mid) and all(folded(f) for f in (idx, ring, pinky)):
+        others = max(dist(t, 0) for t in (8, 16, 20))
+        lead = dist(12, 0) / max(others, 1e-6)
+        if lead > 1.25:
+            margin = min(mid[0] - .80, mid[1] - .25, *(max(.72 - f[0], .05 - f[1]) for f in (idx, ring, pinky)))
+            return "middle_finger", float(min(1.0, .7 + margin + .15 * (lead - 1.25)))
+    if extended(idx) and extended(mid) and folded(ring) and folded(pinky):
+        return "peace", .85
+    if dist(4, 8) / scale < .30 and all(extended(f) for f in (mid, ring, pinky)):
+        return "ok_sign", .8
+    if all(folded(f) for f in (idx, mid, ring, pinky)):
+        v = p[4] - p[2]
+        if thumb_out and v[1] < -.6 * float(np.linalg.norm(v)):      # polegar para cima (y da imagem cresce para baixo)
+            return "thumbs_up", .85
+        return "fist", .8
+    if all(extended(f) for f in (idx, mid, ring, pinky)):
+        return "open", .8
+    return "other", .5
+
+
+class SignReactor:
+    """Confirma cada gesto (2 leituras em 0,8 s) e espera 6 s antes de reagir de novo ao mesmo gesto."""
+    def __init__(self, sensitivity=1.0, kinds=SIGNS):
+        self.sensitivity = sensitivity
+        self.kinds = tuple(kinds)
+        self.hits = {k: deque() for k in self.kinds}
+        self.until = {k: -float("inf") for k in self.kinds}
+
+    def update(self, observations, now, allowed=None):
+        events = []
+        for kind in self.kinds:
+            hits = self.hits[kind]
+            seen = [o for o in observations if o.kind == kind and o.score >= .5 / self.sensitivity]
+            if seen:
+                hits.append((now, max(o.score for o in seen)))
+            while hits and now - hits[0][0] > .8:
+                hits.popleft()
+            if len(hits) >= 2 and now >= self.until[kind] and (allowed is None or kind in allowed):
+                events.append(VisualEvent(kind, max(s for _, s in hits)))
+                self.until[kind] = now + 6.0
+                hits.clear()
+        return events
+
+
 class ObjectReactor:
     def __init__(self, sensitivity=1.0):
         self.threshold = .28 / sensitivity

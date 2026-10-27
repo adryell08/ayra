@@ -111,8 +111,9 @@ def test_interface(check):
     renderer = Renderer(pygame.display.set_mode((1440, 900)), (80,45), theme.DARK_SCHEME)
     renderer.menu.open, renderer.menu.view = True, "features"
     renderer.menu.draw(renderer, HudInfo())
-    check("V2: folha grande mostra cinco interruptores sem linha oculta desnecessária",
-          len(renderer.menu.rows) == len(renderer.menu.items(HudInfo(), theme.DARK_SCHEME)) == 5
+    check("V2: folha grande mostra os sete interruptores (no máximo 1 por rolagem), sem seção repetida",
+          len(renderer.menu.items(HudInfo(), theme.DARK_SCHEME)) == 7 and len(renderer.menu.rows) >= 6
+          and len({g for g, _ in renderer.menu.headers}) == len(renderer.menu.headers)
           and min(renderer.menu.back.size) >= 44 * renderer.s)
     alpha_mask = pygame.surfarray.array_alpha(renderer.mask)
     check("Nitidez: máscara deixa vãos visíveis, núcleo opaco e borda antialiasada",

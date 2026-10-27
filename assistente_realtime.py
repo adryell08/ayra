@@ -1,4 +1,4 @@
-"""Nuria em tempo real: uma sessão persistente da OpenAI Realtime API (áudio + imagem → áudio).
+"""Ayra em tempo real: uma sessão persistente da OpenAI Realtime API (áudio + imagem → áudio).
 
 Fluxo de uma pergunta por voz:
   Espaço → OUVINDO: o microfone envia blocos de 40 ms (`input_audio_buffer.append`) enquanto você fala
@@ -9,7 +9,7 @@ Fluxo de uma pergunta por voz:
 
 Interrupção (Espaço/Esc durante a resposta): `response.cancel`, áudio pendente descartado e
 `conversation.item.truncate` no trecho de fato ouvido. Eco: o microfone só fica aberto enquanto
-a Nuria NÃO fala (meia-duplex), então ela não ouve a própria voz.
+a Ayra NÃO fala (meia-duplex), então ela não ouve a própria voz.
 """
 from __future__ import annotations
 
@@ -26,19 +26,27 @@ import credenciais
 import ia
 import realtime as rt
 from assistente import Assistant
+from gestos import GESTURES
 from voz import MicStream, StreamPlayer, VoiceError
 
 TOOLS = [{
     "type": "function",
     "name": "expressar",
-    "description": ("Muda a expressão do seu rosto de LED enquanto você fala. Chame no início da resposta quando a "
-                    "emoção não for neutra ou quando pedirem uma demonstração (chorar, suplicar, piscar, ficar brava, "
-                    "com sono). Nunca fale sobre esta função nem leia seus argumentos."),
+    "description": ("Sua única ferramenta: muda a expressão do rosto de LED e, se quiser, faz uma simulação e um gesto "
+                    "com os braços enquanto você fala. Chame no início da resposta quando a emoção não for neutra, quando "
+                    "um gesto combinar com a fala (tchau ao se despedir, joia ao concordar...) ou quando pedirem uma "
+                    "demonstração. Nunca fale sobre esta função nem leia seus argumentos."),
     "parameters": {
         "type": "object",
         "properties": {
-            "emocao": {"type": "string", "enum": list(ia.EMOTIONS)},
-            "acao": {"type": "string", "enum": list(ia.ACTIONS)},
+            "emocao": {"type": "string", "enum": list(ia.EMOTIONS),
+                       "description": "Rosto: neutral=normal, happy=feliz, surprised=surpresa, sad=triste, "
+                                      "angry=brava, wide=curiosa (olhos arregalados), sleepy=com sono."},
+            "acao": {"type": "string", "enum": list(ia.ACTIONS),
+                     "description": "Simulação no rosto: chorar=lágrimas, suplicar=olhos pidões, piscar=piscadela."},
+            "gesto": {"type": "string", "enum": ["nenhum"] + list(GESTURES),
+                      "description": "Gesto do corpo 3D: " + ", ".join(f"{k}={v.lower()}" for k, v in GESTURES.items())
+                                     + ". sim/nao mexem só a cabeça."},
         },
         "required": ["emocao"],
     },
@@ -46,8 +54,12 @@ TOOLS = [{
 
 MODES = ("autonomo", "assistido", "teleoperado")
 
-INSTRUCTIONS = (ia.PERSONA + " Para mostrar emoção ou demonstrar algo, chame a função expressar e, na mesma resposta, "
-                "fale normalmente; nunca leia JSON, nomes de funções ou comandos em voz alta.")
+INSTRUCTIONS = (ia.PERSONA + " O que você tem: rosto de LED na tela (e num painel físico de LEDs); corpo 3D com braços e "
+                "mãos, quando ligado (nunca diga que não tem braços); webcam com 1 foto por pergunta (a visão pode estar "
+                "pausada); seus olhos seguem rostos sozinhos e você responde sozinha, sem ferramenta, a acenos, joinha, "
+                "paz e amor, OK e dedo do meio que vê na câmera; um operador humano pode assumir sua voz ou mandar frases. "
+                "Para emoção, simulação ou gesto, chame a função expressar e, na mesma resposta, fale normalmente; "
+                "nunca leia JSON, nomes de funções ou comandos em voz alta.")
 
 
 NO_VISION_NOTE = "(Visão pausada pelo usuário: nenhuma imagem nesta pergunta.)"
@@ -71,6 +83,8 @@ def build_session(cfg) -> dict:
     }
     if cfg.reasoning:
         session["reasoning"] = {"effort": cfg.reasoning}
+    tokens = int(getattr(cfg, "max_tokens", 0) or 0)
+    session["max_output_tokens"] = tokens if tokens else "inf"     # teto por resposta (economia; áudio conta)
     return session
 
 
@@ -88,6 +102,8 @@ class RealtimeAssistant(Assistant):
         self._session_key = None
         self._session_cfg = None
         self.label = label
+        self._fixed_label = label != "OpenAI Realtime"           # "simulada" etc.: rótulo fixo
+        self._image_side = 512
         self.connection = "desconectado"          # desconectado | conectando | conectado | falha
         self._turn: dict = {}
         self._calls: dict = {}
@@ -118,6 +134,11 @@ class RealtimeAssistant(Assistant):
 
     # ---- conexão --------------------------------------------------------------------
     def _real_transport(self, cfg):
+        if getattr(cfg, "provider", "openai") == "gemini":
+            if not cfg.gemini_configured:
+                raise ia.AIError("auth", "Chave do Gemini não configurada. Cole em Ajustes → API (ou GEMINI_API_KEY no .env).")
+            import gemini_live
+            return gemini_live.connect(cfg)
         if not cfg.configured:
             raise ia.AIError("auth", "Chave da OpenAI não configurada. Copie .env.example para .env e preencha OPENAI_API_KEY.")
         return rt.WebSocketTransport(cfg.realtime_url.format(model=cfg.realtime_model), cfg.api_key, cfg.timeout)
@@ -129,9 +150,14 @@ class RealtimeAssistant(Assistant):
     def _ensure_session_locked(self, gen) -> None:
         cfg = self._config_loader()
         session = build_session(cfg)
-        key = (cfg.realtime_model, cfg.realtime_voice, cfg.realtime_url, cfg.api_key)
+        self._image_side = int(getattr(cfg, "image_side", 768) or 768)
+        provider = getattr(cfg, "provider", "openai")
+        if not self._fixed_label:
+            self.label = getattr(cfg, "live_label", self.label)
+        key = ((cfg.realtime_model, cfg.realtime_voice, cfg.realtime_url, cfg.api_key) if provider != "gemini" else
+               ("gemini", cfg.gemini_model, cfg.gemini_voice, cfg.gemini_url, cfg.gemini_key, cfg.max_tokens))
         if self._client is not None and self._client.connected and key == self._session_key:
-            if session != self._session_cfg:                        # mudanças seguras: session.update
+            if session != self._session_cfg and provider != "gemini":   # mudanças seguras: session.update
                 upd = {k: v for k, v in session.items() if k != "model"}
                 upd["audio"] = json.loads(json.dumps(session["audio"]))
                 upd["audio"]["output"].pop("voice", None)
@@ -190,7 +216,7 @@ class RealtimeAssistant(Assistant):
         if st in ("listening", "capturing", "thinking", "speaking"):
             self._mic_stop.set()
             self.player.clear()
-            self._fail(self._gen, "A conexão com a OpenAI caiu. Vou reconectar na próxima pergunta.")
+            self._fail(self._gen, f"A conexão com o {self.label} caiu. Vou reconectar na próxima pergunta.")
 
     def _send(self, event: dict) -> None:
         if self._client is None:
@@ -198,7 +224,7 @@ class RealtimeAssistant(Assistant):
         try:
             self._client.send(event)
         except rt.TransportClosed as error:
-            raise ia.AIError("network", "A conexão com a OpenAI caiu. Tente de novo.") from error
+            raise ia.AIError("network", f"A conexão com o {self.label} caiu. Tente de novo.") from error
 
     # ---- comandos -----------------------------------------------------------------------
     def press_voice(self) -> str:
@@ -345,7 +371,8 @@ class RealtimeAssistant(Assistant):
         self._respond(gen, t0, {})
 
     def _data_url(self, image) -> str:
-        return "data:image/jpeg;base64," + base64.b64encode(ia.encode_jpeg(image, max_side=768, quality=80)).decode()
+        return "data:image/jpeg;base64," + base64.b64encode(ia.encode_jpeg(image, max_side=self._image_side,
+                                                                           quality=78)).decode()
 
     def _send_image(self, image) -> None:
         item_id = "img_" + uuid.uuid4().hex[:24]
@@ -449,6 +476,9 @@ class RealtimeAssistant(Assistant):
         self._calls[call_id] = dict(name=name, emotion=emotion if emotion in ia.EMOTIONS else "neutral", action=action)
         self._set(self._turn.get("gen", -1), emotion=self._calls[call_id]["emotion"], action=action,
                   expr_version=self._snap.expr_version + 1)
+        gesture = str(args.get("gesto", "nenhum")).lower()
+        if gesture in GESTURES and self._alive(self._turn.get("gen", -1)):
+            self.request_gesture(gesture)
 
     def _on_response_done(self, response: dict) -> None:
         turn, gen = self._turn, self._turn.get("gen", -1)
@@ -523,7 +553,7 @@ class RealtimeAssistant(Assistant):
         if not name:
             self._op_live = False
             if self._snap.mode == "teleoperado":
-                self._set(mode="autonomo")                    # operador saiu: a Nuria volta a conversar sozinha
+                self._set(mode="autonomo")                    # operador saiu: a Ayra volta a conversar sozinha
 
     def operator_say(self, text: str) -> bool:
         """Texto do operador: no teleoperado, voz local gratuita (Windows); senão, a IA fala a frase."""
@@ -533,7 +563,8 @@ class RealtimeAssistant(Assistant):
         if self._snap.state in ("thinking", "speaking", "listening", "capturing"):
             self._interrupt()
             self._mic_stop.set()
-        if self._snap.mode == "teleoperado" or not self._config_loader().configured:
+        cfg = self._config_loader()
+        if self._snap.mode == "teleoperado" or not getattr(cfg, "live_configured", cfg.configured):
             self._start(lambda gen: self._local_say(gen, text), "thinking")
         else:
             self._start(lambda gen: self._ai_say(gen, text), "thinking")
@@ -608,11 +639,18 @@ class RealtimeAssistant(Assistant):
 
 
 def check_connection(cfg, transport_factory=None) -> tuple:
-    """Teste rápido da aba API: abre a sessão Realtime e fecha. Devolve (ok, mensagem curta)."""
-    if not cfg.configured:
+    """Teste rápido da aba API: abre a sessão do provedor escolhido e fecha. Devolve (ok, mensagem curta)."""
+    gemini = getattr(cfg, "provider", "openai") == "gemini"
+    if not (cfg.gemini_configured if gemini else cfg.configured):
         return False, "sem chave configurada"
-    factory = transport_factory or (lambda: rt.WebSocketTransport(cfg.realtime_url.format(model=cfg.realtime_model),
-                                                                   cfg.api_key, cfg.timeout))
+    if transport_factory is None:
+        if gemini:
+            import gemini_live
+            transport_factory = lambda: gemini_live.connect(cfg)
+        else:
+            transport_factory = lambda: rt.WebSocketTransport(cfg.realtime_url.format(model=cfg.realtime_model),
+                                                              cfg.api_key, cfg.timeout)
+    factory = transport_factory
     client = rt.RealtimeClient(factory, lambda e: None, lambda r: None)
     t0 = time.perf_counter()
     try:
@@ -624,7 +662,8 @@ def check_connection(cfg, transport_factory=None) -> tuple:
                 raise
             session.pop("reasoning", None)
             client.connect(session, timeout=cfg.timeout)
-        return True, f"conectou em {time.perf_counter() - t0:.1f} s · {cfg.realtime_model}".replace(".", ",", 1)
+        model = cfg.gemini_model if gemini else cfg.realtime_model
+        return True, f"conectou em {time.perf_counter() - t0:.1f} s · {model}".replace(".", ",", 1)
     except rt.TransportClosed as error:
         return False, str(error)[:90]
     finally:

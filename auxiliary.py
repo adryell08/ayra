@@ -69,6 +69,7 @@ class PalmDetector:
         self.last_score = float(scores.max())
         self.last_class = "hand" if self.last_score >= self.threshold else "none"
         indices = np.flatnonzero(scores >= self.threshold)
+        self.last_palms = []
         if not len(indices):
             return []
         raw = boxes[indices]
@@ -77,13 +78,69 @@ class PalmDetector:
         rects = np.column_stack((centers - sizes / 2, sizes))
         keep = np.asarray(cv2.dnn.NMSBoxes(rects.tolist(), scores[indices].tolist(), self.threshold, .30)).reshape(-1)
         result = []
+        self.last_palms = []
         for j in keep[:2]:
             cx, cy = centers[j] / [w, h]
             size = sizes[j, 1] / h
             if not (0 <= cx <= 1 and 0 <= cy <= 1 and .03 < size < 1.5):
                 continue
+            kps = (raw[j, 4:18].reshape(7, 2) + self.anchors[indices[j]] * 192 - [left, top]) / scale
+            self.last_palms.append(dict(center=centers[j].astype(np.float32), size=float(sizes[j].max()),
+                                        keypoints=kps.astype(np.float32), score=float(scores[indices[j]])))
             result.append(Observation("hand", float(scores[indices[j]]),
                                       float(1 - cx if self.mirror else cx), float(cy), float(size)))
+        return result
+
+
+class HandPoseEstimator:
+    """21 pontos da mão (MediaPipe Hand Landmark, OpenCV Zoo) num recorte girado a partir da palma."""
+    def __init__(self, net=None):
+        self.net = load_net(model_path("handpose")) if net is None else net
+
+    def estimate(self, image, palm):
+        import cv2
+        kp = palm["keypoints"]
+        u = kp[2] - kp[0]                                   # punho -> base do dedo médio
+        n = float(np.hypot(*u))
+        u = u / n if n > 1e-3 else np.array([0., -1.], np.float32)
+        perp = np.array([-u[1], u[0]], np.float32)
+        side = 3.0 * palm["size"]
+        c = palm["center"] + u * .4 * palm["size"]          # o recorte inclui os dedos
+        src = np.float32([c, c + u * side / 2, c + perp * side / 2])
+        M = cv2.getAffineTransform(src, np.float32([[112, 112], [112, 0], [224, 112]]))
+        crop = cv2.warpAffine(image, M, (224, 224), borderValue=(0, 0, 0))
+        self.net.setInput(np.ascontiguousarray(crop[..., ::-1].astype(np.float32)[None] / 255))
+        outputs = self.net.forward(self.net.getUnconnectedOutLayersNames())
+        landmarks = next(x for x in outputs if x.size == 63 and float(np.abs(x).max()) > 2).reshape(21, 3)
+        conf = float(next(x for x in outputs if x.size == 1).reshape(-1)[0])
+        inv = cv2.invertAffineTransform(M)
+        return landmarks[:, :2] @ inv[:, :2].T + inv[:, 2], conf
+
+
+class HandGestureDetector:
+    """Palma (rastreio/aceno, como antes) + pontos da mão: dedo do meio, joinha, paz e amor e OK, tudo local."""
+    def __init__(self, mirror=True, threshold=.45, palm=None, pose=None):
+        self.palm = palm or PalmDetector(mirror=mirror, threshold=threshold)
+        self.pose = pose or HandPoseEstimator()
+        self.mirror = mirror
+        self.last_score, self.last_class, self.last_gesture = 0., "none", ""
+
+    def infer(self, image):
+        from gestures import SIGNS, classify_hand
+        result = self.palm.infer(image)
+        self.last_score, self.last_class, self.last_gesture = self.palm.last_score, self.palm.last_class, ""
+        h, w = image.shape[:2]
+        for palm in sorted(getattr(self.palm, "last_palms", []), key=lambda p: -p["size"])[:1]:
+            points, conf = self.pose.estimate(image, palm)
+            if conf < .55:
+                continue
+            label, score = classify_hand(points)
+            self.last_gesture = label
+            if label in SIGNS:
+                self.last_class = label
+                cx, cy = palm["center"] / [w, h]
+                result.append(Observation(label, float(score * conf), float(1 - cx if self.mirror else cx),
+                                          float(cy), float(palm["size"] / h)))
         return result
 
 
@@ -210,9 +267,10 @@ class AuxiliaryWorker:
     Resultados expiram em 350 ms. Pausa/troca invalida até inferências em curso;
     um detector lento nunca acumula quadros nem bloqueia a captura facial.
     """
-    def __init__(self, detectors, clock=time.perf_counter, period=.12):
+    def __init__(self, detectors, clock=time.perf_counter, period=.12, max_width=416):
         self.detectors, self.clock = detectors, clock
         self.period = period
+        self.max_width = max_width
         self._lock = threading.Lock()
         self._wake, self._stop = threading.Event(), threading.Event()
         self._pending = self._result = None
@@ -236,7 +294,7 @@ class AuxiliaryWorker:
             if self._stop.is_set() or self._busy or self._pending is not None or now - self._last < self.period:
                 return
             h, w = image.shape[:2]
-            width = min(w, 416)
+            width = min(w, self.max_width)
             reduced = cv2.resize(image, (width, max(1, round(h * width / w))))
             self._pending = (self._generation, now, reduced, tuple(faces))
             self._last = now
@@ -343,9 +401,11 @@ class AuxiliaryDetector:
                     raise RuntimeError("Modelo ausente/inválido: execute preparar_modelos.bat")
                 factory, period = {"hands": (PalmDetector, .12), "objects": (ObjectDetector, .50),
                                    "smile": (SmileDetector, .15)}[kind]
+                if kind == "hands" and valid_model("handpose"):
+                    factory = HandGestureDetector                 # + reconhecimento do dedo do meio
                 model = factory(mirror=getattr(self.detector, "mirror", True),
                                 threshold={"hands": .45, "objects": .28, "smile": .55}[kind] / self.sensitivity)
-                worker = AuxiliaryWorker([model], period=period)
+                worker = AuxiliaryWorker([model], period=period, max_width=640 if kind == "hands" else 416)
                 with self._lock:
                     closed = self._closed
                     if not closed:

@@ -219,7 +219,7 @@ def test_server():
     check("comando desconhecido é ignorado", "comando_invalido" not in kinds)
     check("operador conectado/desconectado avisado à interface", ("operator", "Teste") in cmds and ("operator", "") in cmds)
     msgs = result.get("msgs", [])
-    check("operador recebe estado da Nuria (~4×/s) e mede latência", any(m.get("tipo") == "estado" for m in msgs)
+    check("operador recebe estado da Ayra (~4×/s) e mede latência", any(m.get("tipo") == "estado" for m in msgs)
           and any(m.get("tipo") == "pong" for m in msgs))
     check("microfone do robô liberado ao desconectar", mics and mics[0].stopped)
     srv.stop()
@@ -264,17 +264,17 @@ def test_modes():
     time.sleep(0.3)                                       # o envio é assíncrono: espera a fila de saída esvaziar
     n_create = len(h.sent("response.create"))
     a.robot_voice = True
-    a.operator_say("Olá, eu sou a Nuria.")
+    a.operator_say("Olá, eu sou a Ayra.")
     spoke = h.wait(lambda: a.state == "speaking", 3)
     extra = len(h.sent("response.create")) - n_create
     if not (spoke and extra == 0):
         print("    diagnóstico:", spoke, extra, a.state, h.states[-10:])
     check("teleoperado: frase do operador sai pela voz local (sem custo de API)", spoke and extra == 0)
-    check("frase do operador aparece na coluna", a.snapshot().answer == "Olá, eu sou a Nuria." and a.snapshot().question == "(operador)")
+    check("frase do operador aparece na coluna", a.snapshot().answer == "Olá, eu sou a Ayra." and a.snapshot().question == "(operador)")
     h.idle()
     filtro_voz.synthesize_local = orig
     a.operator_audio(np.full(480, 1000, np.int16))
-    check("voz ao vivo do operador faz a Nuria falar (boca segue o som)", a.state == "speaking" and h.player.received >= 480)
+    check("voz ao vivo do operador faz a Ayra falar (boca segue o som)", a.state == "speaking" and h.player.received >= 480)
     import robot as robot_mod
     rb = robot_mod.Robot((80, 45))
     time.sleep(0.8)
@@ -295,7 +295,7 @@ def test_modes():
     a.drive_robot(rb, 2.0, "speaking")
     a.set_mode("teleoperado")
     a.set_operator("")
-    check("operador saiu: a Nuria volta ao modo autônomo", a.snapshot().mode == "autonomo" and a.snapshot().operator == "")
+    check("operador saiu: a Ayra volta ao modo autônomo", a.snapshot().mode == "autonomo" and a.snapshot().operator == "")
     h.close()
 
 

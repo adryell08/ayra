@@ -332,7 +332,7 @@ class CameraSource:
     """Captura e detecção em thread própria: o desenho nunca espera pela câmera.
 
     Privacidade: ao pausar, a câmera é *liberada* (a luz do hardware apaga);
-    os quadros são processados na hora e descartados. Exceção explícita (Nuria):
+    os quadros são processados na hora e descartados. Exceção explícita (Ayra):
     `capture_still()` entrega UMA cópia do quadro atual quando o usuário faz uma pergunta.
     """
     kind = "camera"
@@ -356,6 +356,13 @@ class CameraSource:
         self._still_req = threading.Event()
         self._still_ready = threading.Event()
         self._still = None
+        self._preview = None              # miniatura ao vivo (só RAM, só enquanto a tela pede)
+        self._preview_seq = 0
+        self._preview_wanted = -1e9
+        self._preview_last = -1e9
+        self._full = None                 # último quadro inteiro, só enquanto a sala do operador pede
+        self._full_wanted = -1e9
+        self._full_last = -1e9
         self._switch = threading.Event()
         self._pending_features = {}
         self._health = CaptureHealth()
@@ -421,6 +428,22 @@ class CameraSource:
         with self._lock:
             out, self._latest = self._latest, None
         return out
+
+    def latest_frame(self):
+        """Último quadro inteiro (BGR, sem espelhar) para a sala do operador; não interfere na foto da pergunta."""
+        with self._lock:
+            self._full_wanted = time.perf_counter()
+            if self.paused or self.status != "ok":
+                return None
+            return self._full
+
+    def preview(self):
+        """(miniatura BGR espelhada ~320 px, número de sequência) para a coluna; None se pausada/sem câmera."""
+        with self._lock:
+            self._preview_wanted = time.perf_counter()
+            if self.paused or self.status != "ok":
+                return None, self._preview_seq
+            return self._preview, self._preview_seq
 
     def capture_still(self, timeout: float = 2.0):
         """Foto única (BGR) do próximo quadro lido, sob pedido; None se pausada/indisponível."""
@@ -566,6 +589,18 @@ class CameraSource:
                     self._still = frame.copy()
                 self._still_req.clear()
                 self._still_ready.set()
+            if ok and frame is not None:
+                tnow = time.perf_counter()
+                if tnow - self._full_wanted < 1.0 and tnow - self._full_last >= 1 / 10:
+                    with self._lock:
+                        self._full, self._full_last = frame.copy(), tnow
+                if tnow - self._preview_wanted < 1.0 and tnow - self._preview_last >= 1 / 15:
+                    import cv2
+                    fh, fw = frame.shape[:2]
+                    small = cv2.flip(cv2.resize(frame, (320, max(1, round(fh * 320 / fw))), interpolation=cv2.INTER_AREA), 1)
+                    with self._lock:
+                        self._preview, self._preview_last = small, tnow
+                        self._preview_seq += 1
             if not ok or frame is None:
                 if hasattr(self.detector, "reset"):
                     self.detector.reset()

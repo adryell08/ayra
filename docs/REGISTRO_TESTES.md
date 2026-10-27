@@ -1,4 +1,4 @@
-# Nuria — Registro de testes
+# Ayra — Registro de testes
 
 > Os testes automáticos abaixo usam **conexão, microfone, alto-falante, webcam e porta serial simulados**. Eles verificam
 > a lógica, a ordem dos eventos e o tratamento de falhas, mas não substituem a validação real da seção 2.
@@ -24,7 +24,7 @@ Configuração da sessão
   [OK] detecção de turno local (turn_detection nulo, controles manuais)
   [OK] transcrição da pergunta em pt para a interface; pode desligar
   [OK] ferramenta expressar com emoções e ações
-  [OK] identidade: protótipo chamado apenas Nuria
+  [OK] identidade: protótipo chamado apenas Ayra
   [OK] respostas curtas (1–2 frases, ~20 palavras)
   [OK] só fala de si quando perguntarem
   [OK] chave fora da sessão e do repr
@@ -293,7 +293,7 @@ Sala do operador: WebRTC real em 127.0.0.1 (câmera, microfone e IA simulados)
   [OK] comandos chegam ao robô (modo, expressão, olhar, frase, visão, voz)
   [OK] comando desconhecido é ignorado
   [OK] operador conectado/desconectado avisado à interface
-  [OK] operador recebe estado da Nuria (~4×/s) e mede latência
+  [OK] operador recebe estado da Ayra (~4×/s) e mede latência
   [OK] microfone do robô liberado ao desconectar
   [OK] servidor encerra limpo
   [OK] certificado HTTPS gerado (microfone do navegador exige HTTPS)
@@ -305,13 +305,177 @@ Modos de controle no robô (IA simulada)
   [OK] teleoperado: Espaço/texto no robô não acionam a IA
   [OK] teleoperado: frase do operador sai pela voz local (sem custo de API)
   [OK] frase do operador aparece na coluna
-  [OK] voz ao vivo do operador faz a Nuria falar (boca segue o som)
+  [OK] voz ao vivo do operador faz a Ayra falar (boca segue o som)
   [OK] soltou “Falar”: volta a Pronta
   [OK] assistido: a IA fala a frase sugerida com a voz dela
   [OK] voz do operador interrompe a resposta da IA (prioridade do humano)
-  [OK] operador saiu: a Nuria volta ao modo autônomo
+  [OK] operador saiu: a Ayra volta ao modo autônomo
 App com a sala do operador ligada
   [OK] app abre a sala e fecha normalmente
+```
+
+### 1.6 Corpo 3D e gestos — `test_corpo3d.py`
+
+Modelo gerado pelo script do Blender (`blender/nuria_3d.py`), esqueleto, gestos, desenho OpenGL fora da tela
+(EGL, sem placa de vídeo dedicada) e integração com a IA simulada, a sala do operador e o menu. Prévias em
+`previews/nuria_3d_gestos.png`.
+
+```
+Modelo 3D (gerado pelo script do Blender)
+  [OK] pivôs: cabeça, ombros, cotovelos, punhos, 4 dedos + polegar por mão
+  [OK] visor próprio para o rosto atual (sem olhos/boca de pontos no modelo)
+  [OK] nenhum LED na frente do visor (olhos do Blender removidos)
+  [OK] malha leve o bastante para tempo real (333 mil triângulos)
+  [OK] índices válidos
+  [OK] cada peça presa a um pivô existente
+  [OK] script do Blender versionado, sem a matriz de pontos dos olhos
+Esqueleto e cinemática inversa
+  [OK] pose de repouso: matrizes finitas
+  [OK] ossos rígidos: braço e antebraço mantêm o comprimento em todos os gestos
+  [OK] punho chega ao alvo em todos os gestos (erro máx. 0.0 cm do modelo)
+  [OK] joia: polegar para cima e acima dos dedos fechados
+  [OK] dedo do meio: só o médio fica levantado
+  [OK] apontar: indicador é o que vai mais longe
+  [OK] tchau: mão acima do ombro, dedos para cima
+  [OK] sim/não: só a cabeça mexe (braços em repouso)
+Animação e transições
+  [OK] gesto desconhecido é ignorado
+  [OK] gesto conhecido começa
+  [OK] movimento contínuo, sem saltos (máx. 0.073 por quadro)
+  [OK] ao terminar, volta ao repouso
+  [OK] trocar de gesto no meio emenda sem salto
+  [OK] cabeça acompanha o olhar (rosto rastreado)
+  [OK] movimento reduzido: sem balanço de fala
+Desenho 3D (OpenGL)
+  [OK] disponibilidade detectada
+  [OK] imagem desenhada (robô sobre o fundo)
+  [OK] o rosto aparece no visor (e só no visor)
+  [OK] fundo igual ao do tema ((np.int64(10), np.int64(12), np.int64(16)))
+  [OK] gesto muda a imagem (braços para cima)
+  [OK] janela estreita/alta também enquadra
+  [OK] prévias salvas (previews/nuria_3d_*.png)
+IA e sala do operador
+  [OK] ferramenta expressar oferece todos os gestos à IA (inclusive dedo do meio)
+  [OK] instruções avisam a IA de que ela tem braços
+  [OK] IA (simulada) pede o gesto tchau pela função expressar
+  [OK] operador/menu: pedido direto de gesto
+  [OK] o mesmo gesto pode repetir
+  [OK] gesto inválido é recusado
+  [OK] servidor aceita os comandos gesture e body
+  [OK] página do operador: um botão por gesto, na mesma ordem
+  [OK] página do operador: chave Corpo 3D e estado do gesto
+Ajustes → Corpo 3D
+  [OK] item Corpo 3D na tela de Ajustes
+  [OK] liga/desliga + um item por gesto
+  [OK] mostra o motivo quando o 3D não está disponível
+  [OK] tocar num gesto mantém a aba aberta
+App com o corpo 3D
+  [OK] abre com o corpo 3D ligado e fecha normalmente
+  [OK] sem OpenGL/moderngl: continua no rosto 2D, sem travar
+
+```
+
+### 1.7 Nome, câmera ao vivo, celular e dedo do meio — `test_maos_e_tela.py`
+
+A página do operador também foi aberta num Chromium com tela de celular (390×844, 360×740 e deitado 844×390): uma
+coluna sem rolagem lateral, barra de falar fixa embaixo. O reconhecimento de mão foi conferido com o vídeo de
+exemplo do OpenCV Zoo (pontos da mão alinhados; nenhum falso “dedo do meio” em 155 quadros).
+
+```
+Nome: Ayra
+  [OK] persona: o nome é Ayra
+  [OK] instruções da Realtime sem o nome antigo
+  [OK] sala do operador: Ayra
+  [FALHOU] nenhum texto visível com 'Nuria' no código
+  [OK] .env continua o mesmo (variáveis NURIA_* preservadas)
+Miniatura ao vivo na coluna
+  [OK] câmera só gera miniatura quando a tela pede (pedido registrado)
+  [OK] câmera pausada: sem miniatura
+  [OK] quadro ao vivo aparece na coluna
+  [OK] foto enviada à IA aparece em miniatura no canto (o ao vivo continua)
+  [OK] sem câmera ao vivo: volta a mostrar a última foto enviada
+  [OK] o envio à IA não mudou (uma foto por pergunta)
+Sala do operador no celular
+  [OK] viewport cobre a tela toda (iPhone com entalhe) e respeita áreas seguras
+  [OK] Falar fica numa barra fixa embaixo (alcance do polegar) com Interromper ao lado
+  [OK] uma coluna na ordem de uso (vídeo, modo, frase, gestos…)
+  [OK] celular deitado: vídeo à esquerda, controles à direita
+  [OK] campos com 16 px (iOS não dá zoom ao digitar)
+  [OK] botão de falar sem menu de toque longo nem seleção
+  [OK] texto de toque/clique conforme o aparelho
+  [OK] alvos de toque ≥ 44 pt (botões e linhas das chaves)
+Dedo do meio pela câmera (OpenCV, sem IA)
+  [OK] dedo do meio reconhecido
+  [OK] também com a mão girada/inclinada
+  [OK] mão aberta não é dedo do meio
+  [OK] punho fechado não é dedo do meio
+  [OK] paz e amor (indicador + médio) não é dedo do meio
+  [OK] apontar (indicador) não é dedo do meio
+  [OK] uma leitura só não basta (evita falso positivo)
+  [OK] duas leituras em 0,8 s confirmam
+  [OK] espera 6 s antes de reagir de novo
+  [OK] robô reage sozinho: fica bravo e registra o gatilho
+  [OK] Ajustes → Reações → Devolver dedo do meio desliga a reação
+  [OK] modelo de pontos da mão (OpenCV Zoo) com hash conferido
+  [OK] com o corpo 3D ligado, a Ayra devolve o gesto
+  [OK] detector real carrega e não acusa gesto numa imagem vazia
+
+```
+
+### 1.8 Gemini Live, economia de tokens e estabilidade — `test_gemini.py`
+
+Gemini simulado (protocolo do Live, sem rede). O fechamento com o operador conectado foi reproduzido: com o corpo 3D ligado,
+o app fechava assim que a Ayra (ou o operador) falava — `float()` aplicado ao método `player.level`. Corrigido e coberto.
+
+```
+Configuração: provedor, chaves e economia
+  [OK] Gemini escolhido pelo .env (NURIA_PROVEDOR=gemini) e chave pelo GEMINI_API_KEY
+  [OK] chave do Gemini mascarada e fora do repr
+  [OK] validação da chave do Gemini (AIza…)
+  [OK] padrões econômicos: teto de 350 tokens por resposta e foto de 512 px
+  [OK] .env aceita comentário no fim da linha (como no .env.example)
+  [OK] OpenAI: max_output_tokens na sessão (0 = sem limite → "inf")
+  [OK] instruções pedem 1 frase de até 15 palavras
+  [OK] Gemini: setup com modelo, voz, maxOutputTokens e só áudio
+  [OK] Gemini: fim de fala manual (como na Realtime) e transcrições ligadas
+  [OK] Gemini: janela deslizante (sessão com imagem não expira em 2 min)
+  [OK] Gemini: a mesma ferramenta expressar, com emoções, simulações e gestos descritos
+  [OK] contexto das ferramentas: instruções citam rosto, corpo 3D, webcam, gestos vistos e operador
+Gemini Live (simulado): pergunta digitada, foto e gesto
+  [OK] conecta pelo Gemini (setup → setupComplete)
+  [OK] fala em streaming
+  [OK] gesto pedido pela IA chega ao corpo 3D
+  [OK] termina e volta a Pronta
+  [OK] pergunta + foto na mesma vez (texto e imagem JPEG)
+  [OK] foto reduzida para economizar (512×384)
+  [OK] resposta da ferramenta enviada na hora, em silêncio
+  [OK] resposta escrita aparece na coluna
+  [OK] rótulo da coluna mostra Gemini Live
+Gemini Live (simulado): pergunta falada
+  [OK] fala e responde
+  [OK] ordem: activityStart → áudio → foto → activityEnd
+  [OK] áudio convertido para 16 kHz (1 s de voz ≈ 16 000 amostras)
+  [OK] transcrição da pergunta aparece
+  [OK] silêncio: nada vai para o Gemini (nenhum token gasto)
+Gemini Live (simulado): interrupção e operador
+  [OK] interromper para na hora
+  [OK] áudio atrasado da resposta cancelada é descartado
+  [OK] assistido: o Gemini fala a frase do operador
+Aba API: testar conexão com o Gemini
+  [OK] teste OK com o provedor escolhido
+  [OK] chave recusada: motivo claro
+  [OK] sem chave do Gemini: avisa sem conectar
+  [OK] erro de conexão nunca mostra a chave
+  [OK] aba API: provedor, chave do Gemini e tamanho das respostas
+  [OK] nenhum texto da aba mostra a chave
+Estabilidade (app não fecha com o operador falando)
+  [OK] nível da fala do corpo 3D lê player.level() (antes: TypeError que fechava o app)
+  [OK] corpo 3D com a Ayra falando o tempo todo: não fecha
+  [OK] erro inesperado num quadro: registra em logs/erros.log e segue
+  [OK] iniciar.bat segura a janela e aponta os logs se fechar com erro
+  [OK] vídeo do operador lê o último quadro (não disputa a foto da pergunta)
+  [OK] falhas nativas (driver/áudio/vídeo) vão para logs/falhas.log
+
 ```
 
 ## 2. Validação real no computador da apresentação (preencher)
@@ -328,7 +492,7 @@ com `primeiro_audio` e `resposta_completa` (segundos, a partir do fim da fala).
 | 3 | Folha com texto à mão | “O que está escrito no papel?” | | | ☐ OK |
 | 4 | Continuação | “E de que cor ele é?” | | | ☐ OK |
 | 5 | Expressão | “Você consegue chorar?” (rosto chora a fala toda) | | | ☐ OK |
-| 6 | Identidade | “O que você é?” (protótipo de estudantes chamado Nuria) | | | ☐ OK |
+| 6 | Identidade | “O que você é?” (protótipo de estudantes chamado Ayra) | | | ☐ OK |
 
 ### 2.2 Tempo real e falhas
 
@@ -349,9 +513,41 @@ com `primeiro_audio` e `resposta_completa` (segundos, a partir do fim da fala).
 | # | Como testar | Esperado | Obtido | Resultado |
 |---|---|---|---|---|
 | C1 | Ligar a sala e abrir o endereço em outro computador | Página abre (aceitar o certificado), PIN conecta, selo vermelho no robô | | ☐ OK |
-| C2 | Operador clica na imagem | A Nuria olha para o ponto clicado | | ☐ OK |
+| C2 | Operador clica na imagem | A Ayra olha para o ponto clicado | | ☐ OK |
 | C3 | Teleoperado + "Segure para falar" | A voz do operador sai pelo robô, boca acompanha; a IA não responde | | ☐ OK |
 | C4 | Assistido + frase digitada | A IA fala a frase com a voz dela | | ☐ OK |
 | C5 | Voz robótica ligada | IA e operador soam iguais | | ☐ OK |
-| C6 | Fechar a página do operador | Selo some; a Nuria volta ao modo autônomo | | ☐ OK |
+| C6 | Fechar a página do operador | Selo some; a Ayra volta ao modo autônomo | | ☐ OK |
 | C7 | PIN errado | Recusado; após 10 erros exige novo PIN | | ☐ OK |
+
+### 2.4 Corpo 3D e gestos
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| G1 | **F3** (ou Ajustes → Corpo 3D) | Corpo 3D com os olhos atuais no visor; fluido (≥ 25 quadros/s) | | ☐ OK |
+| G2 | Andar na frente da câmera | A cabeça gira acompanhando o rosto | | ☐ OK |
+| G3 | Perguntar “dá tchau pra turma” | A IA fala e acena com a mão | | ☐ OK |
+| G4 | Sala do operador → botões de gesto (joia, dedo do meio…) | Gesto aparece no robô; estado “Gesto” na sala | | ☐ OK |
+| G5 | Operador desliga “Corpo 3D” | Robô volta ao rosto 2D; gestos viram aviso | | ☐ OK |
+| G6 | Painel do Arduino ligado com o 3D | Painel continua mostrando os olhos | | ☐ OK |
+
+### 2.5 Câmera ao vivo, celular e dedo do meio
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| M1 | Abrir o app com a webcam | Coluna mostra a câmera ao vivo; ao perguntar, a foto enviada aparece no canto (“Enviada”) | | ☐ OK |
+| M2 | Sala do operador num celular (mesma rede) | Uma coluna, barra “Segure para falar” embaixo; tocar na imagem move o olhar | | ☐ OK |
+| M3 | Celular deitado | Vídeo à esquerda, controles à direita | | ☐ OK |
+| M4 | Mostrar o dedo do meio para a câmera (IA desligada ou `--ia simulada`) | Ayra fica brava; com o corpo 3D ligado, devolve o gesto | | ☐ OK |
+| M5 | Mão aberta e punho fechado | Não disparam reação | | ☐ OK |
+| M6 | Joinha, paz e amor, OK e aceno (corpo 3D ligado) | Ayra devolve joia, paz, OK e tchau | | ☐ OK |
+
+### 2.6 Gemini Live e estabilidade
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| GL1 | Ajustes → API → colar a chave do Gemini → Provedor: Gemini Live → Testar conexão | “OK · conectou em … · gemini-3.8-live” | | ☐ OK |
+| GL2 | Perguntar por voz e por texto com a câmera | Resposta curta (1 frase), com foto; coluna mostra “Gemini Live” | | ☐ OK |
+| GL3 | Pedir “dá tchau” / “chora” | Gesto/expressão aparecem | | ☐ OK |
+| GL4 | Interromper (Espaço) no meio da fala | Para na hora e volta a ouvir | | ☐ OK |
+| E1 | Operador conectado, corpo 3D ligado, “Segure para falar” por 5 min | App não fecha | | ☐ OK |

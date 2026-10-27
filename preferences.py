@@ -2,11 +2,12 @@
 import json
 from pathlib import Path
 
-DEFAULT_FEATURES = dict(hands=True, tongue=False, smile=True, objects=True, reflex=True, auto_blink=True,
-                    round_eyes=False, outline=False, mouth=True)
+DEFAULT_FEATURES = dict(hands=True, tongue=False, smile=True, objects=True, gesture_reply=True, middle_finger=True,
+                    reflex=True, auto_blink=True, round_eyes=False, outline=False, mouth=True)
 LABELS = dict(hands="Mãos", tongue="Dar língua", smile="Sorriso", objects="Objetos/animais",
               reflex="Reflexo", auto_blink="Piscadas automáticas",
-              round_eyes="Olhos redondos", outline="Contorno dos olhos", mouth="Boca")
+              round_eyes="Olhos redondos", outline="Contorno dos olhos", mouth="Boca",
+              middle_finger="Devolver dedo do meio", gesture_reply="Responder gestos (tchau, joia, paz, OK)")
 FACE_KEYS = ("round_eyes", "outline", "mouth")
 REMOVED_FEATURES = ("tongue",)   # "dar língua" removida: heurística instável (confundia fala)
 CONFIG_PATH = Path(__file__).resolve().parent / "config.local.json"

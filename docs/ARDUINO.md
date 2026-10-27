@@ -1,4 +1,4 @@
-# Nuria no painel de LEDs (Arduino Uno + MAX7219 32×8)
+# Ayra no painel de LEDs (Arduino Uno + MAX7219 32×8)
 
 O painel mostra os mesmos olhos da tela (olhar, piscadas, emoções, choro), redesenhados para 32×8 — sem a boca,
 que não cabe em 8 linhas. Layout **16×8 | 16×8**: cada olho tem a sua metade, fica centralizado nela em repouso e
@@ -24,7 +24,7 @@ Use o conector da **entrada** do painel: o lado em que as setas impressas no ver
  │ DIGITAL 11 ●───────┼───────────────────► DIN
  │         10 ●───────┼───────────────────► CS
  │         13 ●───────┼───────────────────► CLK
- │   [USB] ───────────┼──► PC (Nuria)
+ │   [USB] ───────────┼──► PC (Ayra)
  └────────────────────┘
 ```
 
@@ -46,7 +46,7 @@ Use o conector da **entrada** do painel: o lado em que as setas impressas no ver
 
 ## 3. Usar e calibrar
 
-1. Feche o Monitor Serial da IDE (ele ocupa a porta). Abra a Nuria.
+1. Feche o Monitor Serial da IDE (ele ocupa a porta). Abra a Ayra.
 2. **Ajustes (F10) → Arduino → Painel LED 32×8**: ligar. O status mostra “conectado · COMx”.
 3. Ligue o **Padrão de teste**. O correto, olhando o painel de frente na horizontal:
    ponto aceso **no canto superior esquerdo** e seta **apontando para a direita**; na base, 1, 2, 3 e 4 pontinhos
@@ -61,7 +61,7 @@ Use o conector da **entrada** do painel: o lado em que as setas impressas no ver
 
 PC: a cada quadro (30/s) o rosto do mesmo instante é redesenhado numa grade própria, recortado em 32×8 e
 convertido para os 4 módulos → 35 bytes pela USB (115200 baud). Arduino: só repassa ao MAX7219 por SPI.
-Se o app fechar ou travar, o painel apaga em 3 s. Cabo puxado: a Nuria avisa e reconecta sozinha.
+Se o app fechar ou travar, o painel apaga em 3 s. Cabo puxado: a Ayra avisa e reconecta sozinha.
 
 ## 5. Problemas comuns
 

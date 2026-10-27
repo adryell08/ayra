@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parent / "models" / "perception"
 MODELS = {
     "hands": ("palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx",
               "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c"),
+    "handpose": ("handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx",
+                 "db0898ae717b76b075d9bf563af315b29562e11f8df5027a1ef07b02bef6d81c"),
     "objects": ("object_detection_nanodet/object_detection_nanodet_2022nov.onnx",
                 "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186"),
     "smile": ("facial_expression_recognition/facial_expression_recognition_mobilefacenet_2022july.onnx",

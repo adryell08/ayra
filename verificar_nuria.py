@@ -96,7 +96,7 @@ def main(argv=None) -> int:
     ap.add_argument("--legado", action="store_true", help="testar também o modo legado (3 chamadas)")
     args = ap.parse_args(argv)
     results = []
-    print("Nuria — verificação do ambiente\n")
+    print("Ayra — verificação do ambiente\n")
 
     cfg = credenciais.load()
     results.append(line(cfg.configured, "Chave da OpenAI configurada",

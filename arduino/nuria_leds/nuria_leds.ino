@@ -1,4 +1,4 @@
-// Nuria — painel de LEDs 32x8 (4x MAX7219 encadeados) controlado pelo PC via USB.
+// Ayra — painel de LEDs 32x8 (4x MAX7219 encadeados) controlado pelo PC via USB.
 // Não precisa de biblioteca extra (SPI já vem com a IDE do Arduino).
 //
 // Ligações (Arduino Uno  ->  módulo, lado da ENTRADA / "IN"):

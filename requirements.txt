@@ -7,5 +7,6 @@ scipy>=1.10               # filtro de voz robótica
 aiortc>=1.9               # sala do operador (WebRTC)
 aiohttp>=3.9
 pyserial>=3.5             # painel LED via Arduino (aba Ajustes > Arduino)
+moderngl>=5.10            # corpo 3D em tempo real (OpenGL 3.3)
 openai>=1.50,<2         # só o modo legado (--ia legado) usa o SDK
 pyttsx3>=2.90; sys_platform == "win32"

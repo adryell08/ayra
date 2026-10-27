@@ -1,4 +1,4 @@
-"""Testes da Nuria (Projeto 1): pipeline pergunta→imagem→IA→voz, falhas e interface.
+"""Testes da Ayra (Projeto 1): pipeline pergunta→imagem→IA→voz, falhas e interface.
 
 Sem rede, sem webcam e sem áudio real: gravador, alto-falante e IA são substituídos por dublês.
 Uso:  python test_nuria.py            (gera previews/nuria_*.png)

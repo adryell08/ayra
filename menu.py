@@ -41,16 +41,31 @@ class OptionsMenu:
         if self.view == "api":
             a = getattr(hud, "api", {}) or {}
             has_key = a.get("configured", False)
+            has_gkey = a.get("gemini_configured", False)
+            gemini = a.get("provider") == "gemini"
             return [
+                ("api:provider", "Provedor da conversa", ("Gemini Live" if gemini else "OpenAI Realtime")
+                 + " · tocar para trocar", ""),
                 ("api:key", "Chave da OpenAI", (f"{a.get('masked', '')} · tocar para trocar" if has_key
-                                                else "Não configurada · tocar para colar"), ""),
-                ("api:test", "Testar conexão", a.get("test", "Tocar para testar a Realtime"), ""),
+                                                else "Não configurada · tocar para colar"), "" if gemini else "Em uso"),
+                ("api:gkey", "Chave do Gemini", (f"{a.get('gmasked', '')} · tocar para trocar" if has_gkey
+                                                 else "Não configurada · tocar para colar"), "Em uso" if gemini else ""),
+                ("api:test", "Testar conexão", a.get("test", "Tocar para testar o provedor escolhido"), ""),
                 ("api:remove", "Remover chave", "Toque de novo para confirmar" if a.get("confirm_remove")
-                 else "Apaga a chave do arquivo .env", ""),
-                ("api:model", "Modelo Realtime", a.get("model", "") + " · tocar para trocar", ""),
+                 else "Apaga do .env a chave do provedor escolhido", ""),
+                ("api:model", "Modelo " + ("Gemini" if gemini else "Realtime"), a.get("model", "") + " · tocar para trocar", ""),
                 ("api:voice", "Voz", a.get("voice", "") + " · tocar para trocar", ""),
+                ("api:tokens", "Tamanho das respostas", a.get("tokens", "") + " · economiza tokens", ""),
                 ("api:robot", "Voz robótica", "IA e operador com a mesma voz", "on" if a.get("robot_voice") else "off"),
             ]
+        if self.view == "body":
+            from gestos import GESTURES
+            b = getattr(hud, "body", {}) or {}
+            on = b.get("enabled", False)
+            status = "Ligado · F3 alterna" if on else (b.get("error") or "Rosto 2D · F3 alterna")
+            return [("body:enabled", "Corpo 3D", status, "on" if on else "off")] + [
+                ("body:gesture:" + name, label, "Tocar para ver" if on else "Ligue o corpo 3D para ver", "")
+                for name, label in GESTURES.items()]
         if self.view == "remote":
             r = getattr(hud, "remote", {}) or {}
             on = r.get("enabled", False)
@@ -93,9 +108,11 @@ class OptionsMenu:
             ("motion", "Reduzir movimento", "Ligado" if hud.reduce_motion else "Desligado", "M"),
             ("features", "Reações", "Mãos, língua, sorriso e mais", ""),
             ("face", "Rosto", "Olhos redondos, contorno e boca", ""),
+            ("body", "Corpo 3D", ("Ligado" if (getattr(hud, "body", {}) or {}).get("enabled") else "Rosto 2D") + " · gestos", "F3"),
             ("sims", "Simulações", "Falar, chorar e mais", ""),
             ("remote", "Controle remoto", "Sala do operador · " + ((getattr(hud, "remote", {}) or {}).get("status") or "desligada"), ""),
-            ("api", "API da OpenAI", "Chave " + ((getattr(hud, "api", {}) or {}).get("masked") or "não configurada"), ""),
+            ("api", "API (OpenAI / Gemini)", ("Gemini Live" if (getattr(hud, "api", {}) or {}).get("provider") == "gemini"
+                                               else "OpenAI Realtime") + " · chaves, modelo e voz", ""),
             ("arduino", "Arduino", "Painel LED 32×8 · " + ((getattr(hud, "arduino", {}) or {}).get("status") or "desligado"), ""),
             ("fullscreen", "Tela cheia", "Sair da tela cheia" if hud.fullscreen else "Entrar", "F11"),
             ("help", "Ajuda e atalhos", "Mouse e teclado", "F1"),
@@ -106,21 +123,23 @@ class OptionsMenu:
     def _section(self, action):
         if action.startswith("sim:"):
             return "SIMULAÇÕES"
+        if action.startswith("body:"):
+            return "VISUAL" if action == "body:enabled" else "GESTOS"
         if action.startswith("remote:"):
             return "SALA DO OPERADOR"
         if action.startswith("api:"):
-            return "CONEXÃO" if action in ("api:key", "api:test", "api:remove") else "VOZ E MODELO"
+            return "CONEXÃO" if action in ("api:provider", "api:key", "api:gkey", "api:test", "api:remove") else "VOZ E MODELO"
         if action.startswith("arduino:"):
             key = action.split(":")[1]
             return "PAINEL" if key in ("enabled", "port", "brightness", "size", "test") else "MONTAGEM"
         if action.startswith("feature:"):
             key = action.split(":")[1]
-            return "PERCEPÇÃO" if key in ("hands", "tongue", "smile", "objects") else "ROSTO" if key in ("round_eyes", "outline", "mouth") else "EXPRESSÃO"
+            return "PERCEPÇÃO" if key in ("hands", "tongue", "smile", "objects", "middle_finger", "gesture_reply") else "ROSTO" if key in ("round_eyes", "outline", "mouth") else "EXPRESSÃO"
         if action.startswith("camera:") or action in ("pause", "cameras"):
             return "CÂMERA"
         if action in ("theme", "motion", "fullscreen"):
             return "APARÊNCIA"
-        if action in ("features", "face", "sims") or action.startswith("sim:"):
+        if action in ("features", "face", "body", "sims") or action.startswith("sim:"):
             return "PERSONALIDADE"
         if action in ("arduino", "api", "remote"):
             return "HARDWARE" if action == "arduino" else "INTELIGÊNCIA"
@@ -167,11 +186,11 @@ class OptionsMenu:
         self.back = pygame.Rect(self.card.x + pad, self.card.y + pad, target, target)
 
     def activate(self, action):
-        if action in ("cameras", "features", "face", "sims", "arduino", "api", "remote", "back"):
+        if action in ("cameras", "features", "face", "body", "sims", "arduino", "api", "remote", "back"):
             self.view = action if action != "back" else "root"
             self.focus, self.offset, self.pressed = 0, 0, None
             return True, None
-        if action.startswith(("feature:", "sim:", "arduino:", "api:", "remote:")):
+        if action.startswith(("feature:", "sim:", "arduino:", "api:", "remote:", "body:")):
             self.pressed = None
             return True, action
         self.open = False

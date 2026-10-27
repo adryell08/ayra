@@ -1,5 +1,5 @@
 @echo off
-REM Nuria - verifica chave, internet, microfone e alto-falante antes da apresentacao.
+REM Ayra - verifica chave, internet, microfone e alto-falante antes da apresentacao.
 chcp 65001 >nul
 cd /d "%~dp0"
 if not exist .venv\Scripts\python.exe (

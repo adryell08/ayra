@@ -25,9 +25,10 @@ from robot import RobotFrame
 from theme import Scheme, emotion_tint, mix
 
 SHORTCUTS = [
-    ("Espaço", "Nuria: perguntar por voz; de novo envia; durante a fala interrompe"),
-    ("Enter", "Nuria: digitar a pergunta (Enter envia, Esc cancela)"),
-    ("V", "Nuria: pausar/retomar a visão (só conversa, sem enviar imagem)"),
+    ("Espaço", "Ayra: perguntar por voz; de novo envia; durante a fala interrompe"),
+    ("Enter", "Ayra: digitar a pergunta (Enter envia, Esc cancela)"),
+    ("V", "Ayra: pausar/retomar a visão (só conversa, sem enviar imagem)"),
+    ("F3", "Alternar rosto 2D / corpo 3D com gestos"),
     ("Esc", "Durante uma pergunta: cancelar"),
     ("Esc / Q", "Fechar menu/ajuda; Q encerra o aplicativo"),
     ("F10", "Menu: setas ou Tab navegam; Enter confirma; Esc fecha"),
@@ -95,6 +96,7 @@ class HudInfo:
     arduino: dict = field(default_factory=dict)      # estado da aba Arduino (painel LED físico)
     api: dict = field(default_factory=dict)          # estado da aba API (chave mascarada, teste, modelo, voz)
     remote: dict = field(default_factory=dict)       # sala do operador (controle remoto, etapa 2)
+    body: dict = field(default_factory=dict)         # corpo 3D (ligado, motivo se indisponível)
 
 
 class Renderer:
@@ -114,7 +116,7 @@ class Renderer:
         self.debug_rect = pygame.Rect(0, 0, 0, 0)
         self._close_pressed = None
         self._visual_time = 0.0
-        self.reserve_right = 0          # coluna da Nuria à direita (px); o rosto centraliza no restante
+        self.reserve_right = 0          # coluna da Ayra à direita (px); o rosto centraliza no restante
         self.resize(screen)
 
     # ---- geometria -------------------------------------------------------

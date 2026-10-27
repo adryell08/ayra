@@ -308,7 +308,7 @@ class ArduinoLink:
             if wanted == "auto":
                 self.status = "nenhuma porta disponível (feche o Monitor Serial da IDE)"
             return
-        self.status = ("firmware da Nuria não respondeu" + (f" em {wanted}" if wanted != "auto" else "")
+        self.status = ("firmware da Ayra não respondeu" + (f" em {wanted}" if wanted != "auto" else "")
                        + " · grave arduino/nuria_leds")
 
     def _run(self) -> None:

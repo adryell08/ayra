@@ -1,8 +1,8 @@
-"""Sala do operador (etapa 2): controle remoto da Nuria pelo navegador, via WebRTC.
+"""Sala do operador (etapa 2): controle remoto da Ayra pelo navegador, via WebRTC.
 
 O robô serve uma página HTTPS na rede (local agora; internet depois, ex.: Tailscale). Com o PIN, o operador:
   • vê a câmera (5 quadros/s) e ouve o ambiente do robô;
-  • fala pelo robô ("Falar"), ou digita para a Nuria falar;
+  • fala pelo robô ("Falar"), ou digita para a Ayra falar;
   • alterna o modo (autônomo, assistido, teleoperado), dispara expressões, direciona o olhar,
     pausa a visão e liga a voz robótica.
 
@@ -29,7 +29,7 @@ WEB_DIR = Path(__file__).resolve().parent / "operador_web"
 CERT_DIR = Path(__file__).resolve().parent / "certs"
 VIDEO_FPS = 5
 AUDIO_RATE = 48000                      # WebRTC (Opus) trabalha a 48 kHz
-COMMANDS = ("mode", "say", "expression", "look", "vision", "robot_voice", "interrupt", "ptt", "ping")
+COMMANDS = ("mode", "say", "expression", "gesture", "body", "look", "vision", "robot_voice", "interrupt", "ptt", "ping")
 
 
 def lan_ip() -> str:
@@ -61,7 +61,7 @@ def ensure_cert(directory: Path = CERT_DIR):
     from cryptography.x509.oid import NameOID
     directory.mkdir(exist_ok=True)
     pk = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Nuria (sala do operador)")])
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Ayra (sala do operador)")])
     alt = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
     try:
         alt.append(x509.IPAddress(ipaddress.ip_address(lan_ip())))
@@ -403,6 +403,7 @@ def _track_classes():
                 scale = min(1.0, 640 / float(w))
                 if scale < 1.0:
                     img = cv2.resize(img, (int(w * scale) // 2 * 2, int(h * scale) // 2 * 2), interpolation=cv2.INTER_AREA)
+                img = np.ascontiguousarray(img[:img.shape[0] // 2 * 2, :img.shape[1] // 2 * 2])   # codec exige par
                 self._last = img
             elif self._last is None:
                 self._last = np.zeros((360, 640, 3), np.uint8)       # sem câmera: quadro preto

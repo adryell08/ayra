@@ -158,9 +158,9 @@ def test_session_config():
           and "transcription" not in build_session(cfg(transcription="desligada"))["audio"]["input"])
     check("ferramenta expressar com emoções e ações", s["tools"][0]["name"] == "expressar"
           and "chorar" in s["tools"][0]["parameters"]["properties"]["acao"]["enum"])
-    check("identidade: protótipo chamado apenas Nuria", "Seu nome é Nuria" in s["instructions"]
-          and "Ayra" not in s["instructions"] and "protótipo" in s["instructions"])
-    check("respostas curtas (1–2 frases, ~20 palavras)", "CURTAS" in s["instructions"] and "20 palavras" in s["instructions"])
+    check("identidade: protótipo chamado apenas Ayra", "Seu nome é Ayra" in s["instructions"]
+          and "Nuria" not in s["instructions"] and "protótipo" in s["instructions"])
+    check("respostas curtas (1 frase, até 15 palavras) e teto de tokens", "CURTAS" in s["instructions"] and "15 palavras" in s["instructions"] and s["max_output_tokens"] == 350)
     check("só fala de si quando perguntarem", "Só fale de si mesma" in s["instructions"])
     check("chave fora da sessão e do repr", "sk-teste" not in json.dumps(s) and "sk-teste" not in repr(cfg()))
 
