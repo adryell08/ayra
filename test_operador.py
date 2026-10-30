@@ -202,7 +202,8 @@ def test_server():
     check("WebRTC conecta e o canal de comandos abre", result.get("dc"))
     video = result.get("video", [])
     fps = (len(video) - 1) / (video[-1][2] - video[0][2]) if len(video) > 2 else 0
-    check("vídeo do robô chega ao operador (~5 quadros/s, 640×480)", video and video[-1][:2] == (640, 480) and 3 <= fps <= 7)
+    check(f"vídeo do robô chega ao operador (~10 quadros/s, 640×480; medido {fps:.1f})",
+          video and video[-1][:2] == (640, 480) and 8 <= fps <= 15)
     check("áudio do ambiente (microfone do robô) chega ao operador", result.get("robot_audio", 0) > 20)
     check("voz do operador só passa enquanto segura “Falar”",
           result.get("audio_before_ptt") == 0 and result.get("audio_during_ptt", 0) > 10 and result.get("audio_after_ptt", 1) == 0)
@@ -270,7 +271,7 @@ def test_modes():
     if not (spoke and extra == 0):
         print("    diagnóstico:", spoke, extra, a.state, h.states[-10:])
     check("teleoperado: frase do operador sai pela voz local (sem custo de API)", spoke and extra == 0)
-    check("frase do operador aparece na coluna", a.snapshot().answer == "Olá, eu sou a Ayra." and a.snapshot().question == "(operador)")
+    check("frase do operador aparece na coluna", a.snapshot().answer == "Olá, eu sou a Ayra." and a.snapshot().question == "")
     h.idle()
     filtro_voz.synthesize_local = orig
     a.operator_audio(np.full(480, 1000, np.int16))
@@ -290,7 +291,7 @@ def test_modes():
     h.wait(lambda: a.state in ("thinking", "speaking"))
     a.operator_audio(np.full(480, 1000, np.int16))
     check("voz do operador interrompe a resposta da IA (prioridade do humano)",
-          len(h.sent("response.cancel")) >= 1 or a.snapshot().question == "(voz do operador)")
+          len(h.sent("response.cancel")) >= 1 or a.snapshot().question == "")
     time.sleep(0.8)
     a.drive_robot(rb, 2.0, "speaking")
     a.set_mode("teleoperado")

@@ -26,7 +26,7 @@ DEFAULTS = {
     "NURIA_RUIDO": "far_field",                         # near_field (fone) | far_field (notebook) | desligado
     "NURIA_RACIOCINIO": "low",                          # minimal|low|medium|high; vazio = padrão do modelo
     "NURIA_REALTIME_URL": "wss://api.openai.com/v1/realtime?model={model}",
-    "NURIA_VOZ_ROBOTICA": "0",                          # 1 = filtro robótico na voz da IA e do operador
+    "NURIA_VOZ_ROBOTICA": "0",                          # grau do filtro robótico, 0–100 (%), na voz da IA e do operador
     # Provedor da conversa em tempo real: openai (Realtime) ou gemini (Gemini Live)
     "NURIA_PROVEDOR": "openai",
     "NURIA_MODELO_GEMINI": "gemini-3.8-live",
@@ -82,6 +82,7 @@ class AIConfig:
     gemini_url: str = DEFAULTS["NURIA_GEMINI_URL"]
     max_tokens: int = 350                                # 0 = sem limite
     image_side: int = 512
+    robot_level: int = 0                                 # grau da voz robótica, 0–100 (%)
 
     @property
     def configured(self) -> bool:
@@ -133,10 +134,10 @@ def load(path: Path = ENV_FILE, environ=None) -> AIConfig:
     return AIConfig(key, get("NURIA_MODELO_VISAO"), get("NURIA_MODELO_STT"), get("NURIA_MODELO_TTS"),
                     get("NURIA_VOZ"), timeout, get("NURIA_MODELO_REALTIME"), get("NURIA_VOZ_REALTIME"),
                     raw("NURIA_TRANSCRICAO"), raw("NURIA_RUIDO"), raw("NURIA_RACIOCINIO"), get("NURIA_REALTIME_URL"),
-                    get("NURIA_VOZ_ROBOTICA").strip().lower() in ("1", "sim", "true", "on"),
+                    robot_percent(get("NURIA_VOZ_ROBOTICA")) > 0,
                     provider if provider in ("openai", "gemini") else "openai", gkey, get("NURIA_MODELO_GEMINI"),
                     get("NURIA_VOZ_GEMINI"), get("NURIA_GEMINI_URL"), integer("NURIA_MAX_TOKENS", 0, 4096),
-                    integer("NURIA_IMAGEM_LADO", 256, 1536))
+                    integer("NURIA_IMAGEM_LADO", 256, 1536), robot_level=robot_percent(get("NURIA_VOZ_ROBOTICA")))
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +148,19 @@ REALTIME_VOICES = ("marin", "cedar", "coral", "sage", "alloy", "ash", "ballad", 
 GEMINI_MODELS = ("gemini-3.8-live", "gemini-3.1-flash-live-preview")
 GEMINI_VOICES = ("Kore", "Aoede", "Leda", "Zephyr", "Puck", "Charon", "Fenrir", "Orus")
 TOKEN_LIMITS = (("Curtíssimas", 220), ("Curtas", 350), ("Normais", 700), ("Sem limite", 0))
+
+
+def robot_percent(raw) -> int:
+    """NURIA_VOZ_ROBOTICA: 0–100 (%). Valores antigos: sim/true/on/1 = 60 %; não/off/0 = 0 %."""
+    text = str(raw or "").strip().lower().rstrip("%")
+    if text in ("", "0", "nao", "não", "false", "off"):
+        return 0
+    if text in ("1", "sim", "true", "on"):
+        return 60
+    try:
+        return max(0, min(100, int(float(text))))
+    except ValueError:
+        return 0
 
 
 def mask(key: Optional[str]) -> str:

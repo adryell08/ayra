@@ -778,6 +778,7 @@ def test_camera_metrics_smoke():
               [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_d)],
               [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F10),
                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_DOWN),
+               pygame.event.Event(pygame.KEYDOWN, key=pygame.K_DOWN),         # "Modo de uso", Pausar, Escolher câmera
                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN),
                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_DOWN),
                pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
@@ -838,7 +839,7 @@ def test_menu():
     pos = menu.button.center
     menu.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos), items)
     menu.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=pos), items)
-    pos = menu.rows[0].center
+    pos = menu.rows[[i[0] for i in items].index("pause")].center
     menu.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=pos), items)
     consumed, action = menu.handle_event(pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=pos), items)
     check("Mouse abre menu e ativa pausa", consumed and action == "pause" and not menu.open)
@@ -877,6 +878,7 @@ def test_window_smoke():
         [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F11)],
         [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F11)],
         [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F10),
+         pygame.event.Event(pygame.KEYDOWN, key=pygame.K_DOWN),         # 1º item é "Modo de uso"; o 2º é Pausar
          pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN)],
         [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_d)],
         [pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F10),

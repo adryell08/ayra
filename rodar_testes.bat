@@ -6,7 +6,7 @@ if not exist .venv\Scripts\python.exe (echo Execute iniciar.bat primeiro. & paus
 set SDL_VIDEODRIVER=dummy
 set SDL_AUDIODRIVER=dummy
 set FALHOU=0
-for %%t in (test_realtime.py test_nuria.py test_api.py test_arduino.py test_operador.py test_corpo3d.py test_maos_e_tela.py test_gemini.py) do (
+for %%t in (test_realtime.py test_nuria.py test_api.py test_arduino.py test_operador.py test_corpo3d.py test_maos_e_tela.py test_gemini.py test_audio.py test_uso.py test_historico.py test_memoria.py test_actions.py test_interface.py test_perception.py test_preferences.py test_stability.py) do (
   echo.
   echo ===== %%t =====
   .venv\Scripts\python.exe %%t --no-png || set FALHOU=1

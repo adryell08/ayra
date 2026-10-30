@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 import credenciais
+import historico
 import ia
 from voz import Player, Recorder, VoiceError
 
@@ -34,6 +35,7 @@ class Snapshot:
     vision: bool = True              # False = visão pausada: perguntas vão sem imagem
     mode: str = "autonomo"           # autonomo | assistido | teleoperado (controle remoto, etapa 2)
     operator: str = ""               # operador remoto conectado ("" = nenhum)
+    continuous: bool = False         # conversa contínua (microfone travado, como numa ligação)
     image: object = None             # BGR da última pergunta (só em memória)
     image_version: int = 0
     message: str = ""                # aviso/erro em texto
@@ -63,6 +65,8 @@ class Assistant:
         self._stop_speak = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.history: List[Tuple[str, str]] = []
+        self.session_id = historico.new_session_id()      # conversa atual (logs/sessoes.jsonl)
+        self.memory = None                                # memoria.Memory (opcional); main.py liga
         self.state_since = time.perf_counter()
         self.offline_speaking = False
 
@@ -274,13 +278,52 @@ class Assistant:
         else:
             self._set(gen, state="idle", message="", message_kind="done")
 
+    def _mem(self):
+        m = self.memory
+        return m if (m is not None and m.active) else None
+
+    def mem_event(self, actor: str, event_type: str, text: str = "", key: Optional[str] = None, **meta) -> None:
+        """Registra na memória sem nunca bloquear nem falhar (a escrita roda em outra thread)."""
+        m = self._mem()
+        if m is None:
+            return
+        try:
+            m.append_event(self.session_id, actor, event_type, text, source=self._snap.backend or "", metadata=meta or None,
+                           event_key=key, mode=self._snap.mode)
+        except Exception:
+            pass
+
+    def new_conversation(self) -> None:
+        """Começa do zero: esquece as trocas recentes e abre outro registro."""
+        self.cancel() if self._snap.state not in ("idle", "error") else None
+        self.history = []
+        if self._mem() is not None:
+            self.memory.end_session(self.session_id)
+        self.session_id = historico.new_session_id()
+
+    def resume_session(self, session_id: str) -> int:
+        """Retoma uma conversa salva: repõe as últimas trocas (só texto) como contexto. Devolve quantas trocas."""
+        turns = [t for t in historico.load(session_id) if t[0] or t[1]]
+        if not turns:
+            return 0
+        self.cancel() if self._snap.state not in ("idle", "error") else None
+        self.history = turns[-6:]
+        self.session_id = session_id
+        return len(turns)
+
+    def repeat_last(self) -> bool:
+        return False
+
+    def can_repeat(self) -> bool:
+        return False
+
     def _write_log(self, entry: dict) -> None:
         """Registro local de testes: só texto e tempos, nunca imagem nem chave."""
         if not self._log:
             return
         try:
             LOG_DIR.mkdir(exist_ok=True)
-            entry = dict(quando=time.strftime("%Y-%m-%d %H:%M:%S"), backend=self._snap.backend, **entry)
+            entry = dict(quando=time.strftime("%Y-%m-%d %H:%M:%S"), sessao=self.session_id, backend=self._snap.backend, **entry)
             with open(LOG_DIR / "sessoes.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError:

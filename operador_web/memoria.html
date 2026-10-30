@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)">
+<title>Ayra · Memória</title>
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #ffffff; --text: #111216; --dim: #5b5e66; --line: #d9dadf;
+    --blue: #0a6cff; --green: #1f9d48; --red: #e5363d; --orange: #c75400; --chip: #eceef2;
+    --radius: 18px; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0c0e; --card: #1c1c1e; --text: #f5f5f7; --dim: #b8b8c0; --line: #3a3a3f;
+            --blue: #0a84ff; --green: #30d158; --red: #ff453a; --orange: #ff9f0a; --chip: #2c2c2e; --shadow: none; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
+  button, input { font: inherit; color: inherit; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; position: sticky; top: 0; z-index: 2;
+    background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(16px); flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -.02em; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--chip);
+    font-weight: 600; font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 0 16px 24px; max-width: 1180px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); margin: 0 0 10px; }
+  .full { grid-column: 1 / -1; }
+  .btn { border: 0; border-radius: 12px; min-height: 44px; padding: 8px 14px; background: var(--chip); font-weight: 600; cursor: pointer; }
+  .btn.primary { background: var(--blue); color: #fff; } .btn.danger { background: var(--red); color: #fff; }
+  .btn.small { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  input[type=text], input[type=search], input[inputmode] { width: 100%; min-height: 44px; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); padding: 8px 12px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+  li.item:first-child { border-top: 0; }
+  .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .meta { color: var(--dim); font-size: 12px; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--chip); margin-right: 6px; }
+  .tag.op { background: color-mix(in srgb, var(--orange) 22%, transparent); }
+  .tag.ok { background: color-mix(in srgb, var(--green) 22%, transparent); }
+  .empty { color: var(--dim); font-size: 14px; padding: 6px 0; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .stat { background: var(--chip); border-radius: 12px; padding: 8px 12px; }
+  .stat b { display: block; font-size: 18px; }
+  #login { max-width: 420px; margin: 40px auto; }
+  .err { color: var(--red); min-height: 1.4em; font-size: 14px; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ayra · Memória</h1>
+  <span class="pill" id="status">Desconectado</span>
+  <a class="pill" href="/" style="text-decoration:none;color:inherit;margin-left:auto">Sala do operador</a>
+</header>
+
+<section id="login" class="card">
+  <h2>Entrar</h2>
+  <p class="meta">Use o PIN que aparece no robô (Ajustes → Conexões). Não precisa de operador conectado: você mesmo pode gerenciar.</p>
+  <div class="row"><input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    <button class="btn primary" id="enter">Entrar</button></div>
+  <p class="err" id="loginErr"></p>
+</section>
+
+<main id="app" hidden>
+  <section class="card full">
+    <h2>Nova instrução</h2>
+    <div class="row"><input type="text" id="newText" maxlength="300" placeholder="Ex.: Sempre apresente-se como assistente do laboratório">
+      <button class="btn primary" id="add">Adicionar</button></div>
+    <p class="meta">Vale para as próximas respostas na hora e fica salva até ser revogada.</p>
+  </section>
+
+  <section class="card">
+    <h2>Instruções vigentes</h2>
+    <ul id="instr"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Preferências e conhecimento</h2>
+    <ul id="mems"></ul>
+    <p class="meta">“Não verificado” veio da fala do usuário. Validar transforma em conhecimento que vale para qualquer conversa.</p>
+  </section>
+
+  <section class="card full">
+    <h2>Buscar no que foi dito</h2>
+    <input type="search" id="q" placeholder="Palavras (sem acento também serve)">
+    <ul id="results" style="margin-top:8px"></ul>
+  </section>
+
+  <section class="card full">
+    <h2>Saúde da memória</h2>
+    <div class="stats" id="stats"></div>
+    <div class="row" style="margin-top:12px;justify-content:space-between;flex-wrap:wrap">
+      <span class="meta">Atualiza sozinho a cada 8 s só se algo mudou. Nada aqui roda no robô enquanto a página está fechada.</span>
+      <button class="btn danger" id="forget">Esquecer tudo</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = sessionStorage.getItem("memToken") || "";
+let version = null, query = "", timer = null, armed = 0;
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+async function api(path, body) {
+  const opt = { headers: { "X-Token": token } };
+  if (body !== undefined) { opt.method = "POST"; opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const res = await fetch(path, opt);
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout(); throw new Error(data.erro || "Entre de novo."); }
+  if (!res.ok) throw new Error(data.erro || ("Erro " + res.status));
+  return data;
+}
+
+function logout() { token = ""; sessionStorage.removeItem("memToken"); $("app").hidden = true; $("login").hidden = false; clearInterval(timer); }
+
+async function enter() {
+  const pin = $("pin").value.trim();
+  if (!/^\d{6}$/.test(pin)) { $("loginErr").textContent = "O PIN tem 6 dígitos."; return; }
+  $("loginErr").textContent = "";
+  try {
+    const res = await fetch("/api/memoria/entrar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin }) });
+    const data = await res.json();
+    if (!res.ok) { $("loginErr").textContent = data.erro || "Não foi possível entrar."; return; }
+    token = data.token; sessionStorage.setItem("memToken", token); start();
+  } catch (e) { $("loginErr").textContent = "Sem conexão com o robô."; }
+}
+
+function start() {
+  $("login").hidden = true; $("app").hidden = false; version = null; load();
+  clearInterval(timer);
+  timer = setInterval(() => { if (!document.hidden) load(); }, 8000);   // leve: o robô só manda tudo se mudou
+}
+
+async function load(force) {
+  try {
+    const url = "/api/memoria?" + new URLSearchParams({ q: query, v: force || query ? "" : (version ?? "") });
+    const d = await api(url);
+    $("status").textContent = "Conectado";
+    if (d.same) return;
+    version = d.version; render(d);
+  } catch (e) { $("status").textContent = e.message; }
+}
+
+function render(d) {
+  const ins = d.instructions || [];
+  $("instr").innerHTML = ins.length ? ins.map((i) => `
+    <li class="item" data-id="${i.id}"><div class="grow">
+      <span class="tag ${i.actor === "operator" || i.actor === "painel" ? "op" : ""}">${i.actor === "operator" ? "operador" : i.actor === "painel" ? "painel" : "usuário"}</span>
+      <span class="txt">${esc(i.instruction)}</span></div>
+      <div class="actions"><button class="btn small" data-act="editar">Editar</button>
+      <button class="btn small danger" data-act="revogar">Revogar</button></div></li>`).join("")
+    : `<li class="empty">Nenhuma instrução. Diga ao robô “lembre-se de que…” ou adicione acima.</li>`;
+  const mems = d.memories || [];
+  $("mems").innerHTML = mems.length ? mems.map((m) => `
+    <li class="item" data-id="${m.id}"><div class="grow">
+      <span class="tag ${m.validation_status === "validated" ? "ok" : ""}">${m.validation_status === "validated" ? "validado" : "não verificado"}</span>${esc(m.content)}</div>
+      <div class="actions">${m.validation_status === "validated" ? "" : `<button class="btn small" data-act="validar">Validar</button>`}
+      <button class="btn small danger" data-act="apagar">Apagar</button></div></li>`).join("")
+    : `<li class="empty">Nada guardado ainda. Ex.: “meu nome é…”, “eu gosto de…”.</li>`;
+  const r = d.results || [];
+  $("results").innerHTML = query ? (r.length ? r.map((x) => `<li class="item"><div class="grow"><span class="tag">${x.kind === "event" ? "fala" : x.kind === "instruction" ? "instrução" : "preferência"}</span>${esc(x.text)}</div></li>`).join("")
+    : `<li class="empty">Nada encontrado.</li>`) : "";
+  const s = d.stats || {};
+  $("stats").innerHTML = [["Gravados", s.written], ["Na fila", s.queued], ["Descartados", s.dropped], ["Erros", s.errors],
+    ["Escrita p95", (s.write_p95_ms ?? 0) + " ms"], ["Contexto", (s.context_ms ?? 0) + " ms"], ["Busca", s.fts ? "FTS5" : "simples"]]
+    .map(([k, v]) => `<div class="stat"><span class="meta">${k}</span><b>${esc(v ?? "—")}</b></div>`).join("");
+}
+
+async function act(acao, id, texto) {
+  try { await api("/api/memoria/acao", { acao, id, texto }); await load(true); }
+  catch (e) { $("status").textContent = e.message; }
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const li = b.closest("li"); const id = +li.dataset.id; const a = b.dataset.act;
+  if (a === "editar") {
+    const cur = li.querySelector(".txt").textContent;
+    const t = prompt("Novo texto da instrução:", cur);
+    if (t && t.trim() && t.trim() !== cur) act("editar", id, t.trim());
+    return;
+  }
+  act(a, id);
+});
+$("enter").onclick = enter;
+$("pin").addEventListener("keydown", (e) => { if (e.key === "Enter") enter(); });
+$("add").onclick = () => { const t = $("newText").value.trim(); if (t) { act("nova", 0, t); $("newText").value = ""; } };
+$("newText").addEventListener("keydown", (e) => { if (e.key === "Enter") $("add").click(); });
+let qt = null;
+$("q").addEventListener("input", (e) => { clearTimeout(qt); qt = setTimeout(() => { query = e.target.value.trim(); load(true); }, 300); });
+$("forget").onclick = () => {
+  if (Date.now() - armed < 5000) { armed = 0; $("forget").textContent = "Esquecer tudo"; act("esquecer_tudo", 0); }
+  else { armed = Date.now(); $("forget").textContent = "Toque de novo para confirmar"; setTimeout(() => { $("forget").textContent = "Esquecer tudo"; }, 5000); }
+};
+if (token) start();
+</script>
+</body>
+</html>

@@ -329,6 +329,8 @@ class AuxiliaryWorker:
             self.detectors.clear()
 
     def _run(self):
+        from tracker import lower_thread_priority
+        lower_thread_priority()
         while not self._stop.is_set():
             self._wake.wait(.1)
             self._wake.clear()
@@ -399,8 +401,8 @@ class AuxiliaryDetector:
             try:
                 if not valid_model(kind):
                     raise RuntimeError("Modelo ausente/inválido: execute preparar_modelos.bat")
-                factory, period = {"hands": (PalmDetector, .12), "objects": (ObjectDetector, .50),
-                                   "smile": (SmileDetector, .15)}[kind]
+                factory, period = {"hands": (PalmDetector, .18), "objects": (ObjectDetector, .60),
+                                   "smile": (SmileDetector, .30)}[kind]
                 if kind == "hands" and valid_model("handpose"):
                     factory = HandGestureDetector                 # + reconhecimento do dedo do meio
                 model = factory(mirror=getattr(self.detector, "mirror", True),

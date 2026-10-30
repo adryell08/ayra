@@ -7,13 +7,13 @@ custa pouco processador (~1 ms por bloco de 40 ms num i5).
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import butter, sosfilt, sosfilt_zi
 
 RATE = 24000
 
 
 class RobotVoice:
     def __init__(self, rate: int = RATE, pitch: float = 105.0, bands: int = 18, mix_ring: float = 0.04, seed: int = 7):
+        from scipy.signal import butter, sosfilt_zi        # carga tardia: ~70 MB só quando a voz robótica é usada
         self.rate, self.pitch, self.mix_ring = rate, pitch, mix_ring
         edges = np.geomspace(120.0, min(6800.0, rate * 0.45), bands + 1)
         self._bands = []
@@ -21,10 +21,12 @@ class RobotVoice:
             sos = butter(2, [lo, hi], btype="bandpass", fs=rate, output="sos")
             self._bands.append(dict(sos=sos, zi_mod=sosfilt_zi(sos) * 0.0, zi_car=sosfilt_zi(sos) * 0.0,
                                     noisy=lo > 2600.0))
-        self._env_sos = butter(2, 28.0, btype="lowpass", fs=rate, output="sos")
+        self._env_sos = butter(2, 50.0, btype="lowpass", fs=rate, output="sos")   # envelope rápido: consoantes nítidas
         for b in self._bands:
             b["zi_env"] = sosfilt_zi(self._env_sos) * 0.0
         self._phase = 0.0
+        self._delay = int(round(0.0035 * rate))                 # atraso do caminho robótico: o seco espera o mesmo tempo (sem eco/pente)
+        self._tail = np.zeros(self._delay, np.float32)
         self._ring_phase = 0.0
         self._gain = 1.0
         self._rng = np.random.default_rng(seed)
@@ -35,8 +37,17 @@ class RobotVoice:
             b["zi_car"] *= 0.0
             b["zi_env"] *= 0.0
         self._gain = 1.0
+        self._tail[:] = 0.0
 
-    def process(self, pcm: np.ndarray) -> np.ndarray:
+    def process(self, pcm: np.ndarray, level: float = 1.0, dry: float | None = None) -> np.ndarray:
+        """level: grau de robótica (0 = voz natural, 1 = totalmente robótica); a mistura com a voz original é
+        (1 − level). `dry` força a parte original (uso avançado)."""
+        level = max(0.0, min(1.0, float(level)))
+        if dry is None:
+            dry = 1.0 - level
+        if level <= 0.0 and dry >= 1.0:
+            return np.asarray(pcm, dtype=np.int16)
+        from scipy.signal import sosfilt
         x = np.asarray(pcm, dtype=np.float32) / 32768.0
         n = len(x)
         if n == 0:
@@ -63,6 +74,11 @@ class RobotVoice:
         target = min(40.0, rms_in / rms_out) if rms_in > 2e-4 else self._gain
         self._gain = 0.8 * self._gain + 0.2 * target
         y = (1.0 - self.mix_ring) * out * self._gain + self.mix_ring * ring
+        if dry > 0.0:
+            ext = np.concatenate([self._tail, x])                  # voz original com o mesmo atraso do caminho robótico
+            xd = ext[:n]
+            self._tail = ext[n:n + self._delay].copy() if len(ext) >= n + self._delay else ext[-self._delay:].copy()
+            y = (1.0 - dry) * y + dry * xd
         y = np.tanh(y * 1.4) / np.tanh(1.4)                       # leve saturação, sem estourar
         return np.clip(y * 32767.0, -32768, 32767).astype(np.int16)
 

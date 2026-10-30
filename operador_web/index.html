@@ -59,6 +59,12 @@
     -webkit-touch-callout: none; touch-action: none; }
   #stopBar { display: none; }
   #talk.live { background: var(--red); }
+  #talk.locked { background: var(--green); }
+  #lockHint { position: absolute; left: 50%; transform: translate(-50%, -100%); top: -6px; white-space: nowrap;
+    padding: 6px 12px; border-radius: 999px; background: var(--chip); font-size: 13px; font-weight: 600;
+    opacity: 0; pointer-events: none; transition: opacity .15s; }
+  #lockHint.show { opacity: 1; }
+  #talkBar { position: relative; }
   .row { display: flex; gap: 8px; align-items: center; }
   textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; padding: 10px;
     background: transparent; font-size: 16px; }
@@ -113,11 +119,13 @@
     #talkBar { left: 50%; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.toggle.slider{flex-wrap:wrap;gap:6px 12px}.toggle.slider output{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dim,#888)}.toggle.slider input[type=range]{flex:1 1 100%;min-height:44px;accent-color:var(--accent,#0a84ff)}
 </style>
 </head>
 <body>
 <header>
   <h1>Ayra · Sala do operador</h1>
+  <a class="pill" href="/memoria" target="_blank" style="text-decoration:none;color:inherit;margin-left:auto">Memória</a>
   <span class="pill"><span class="dot" id="connDot"></span><span id="connText">Desconectado</span></span>
 </header>
 
@@ -136,7 +144,7 @@
   <div class="stack">
     <div id="videoBox" title="Toque ou clique para a Ayra olhar para esse ponto">
       <video id="video" autoplay playsinline muted></video>
-      <span class="pill" id="rec"><span class="dot err"></span>AO VIVO · 5 FPS</span>
+      <span class="pill" id="rec"><span class="dot err"></span><span id="fpsText">AO VIVO · 10 FPS</span></span>
       <span id="lookMark"></span>
       <span id="videoHint"><span class="mouse">Clique</span><span class="touch">Toque</span> na imagem para a Ayra olhar para lá</span>
     </div>
@@ -192,6 +200,7 @@
     <div class="card c-voice">
       <h2>Sua voz</h2>
       <div id="talkBar">
+        <span id="lockHint">↑ Deslize para travar (conversa livre)</span>
         <button class="btn primary" id="talk">Segure para falar</button>
         <button class="btn danger" id="stopBar" aria-label="Interromper a Ayra">
           <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="2.5" fill="currentColor"/></svg>
@@ -199,7 +208,8 @@
       </div>
       <div class="row" style="margin-top:10px"><span style="font-size:13px;color:var(--dim);width:90px">Seu microfone</span><div class="meter"><i id="micMeter"></i></div></div>
       <div class="row" style="margin-top:6px"><span style="font-size:13px;color:var(--dim);width:90px">Áudio do robô</span><div class="meter"><i id="robotMeter"></i></div></div>
-      <p class="modeHelp"><span class="mouse">Atalho: segure a barra de espaço. </span>A Ayra mexe a boca com a sua voz.</p>
+      <p class="modeHelp">Segure para falar ou <b>deslize para cima para travar</b> (como no WhatsApp): vira uma ligação,
+        as duas pontas falam ao mesmo tempo. <span class="mouse">Atalhos: segure Espaço; T trava/destrava. </span>A Ayra mexe a boca com a sua voz.</p>
     </div>
     <div class="card c-say">
       <h2>A Ayra diz</h2>
@@ -208,11 +218,13 @@
         <button class="btn primary" id="say" style="flex:1">Falar frase</button>
         <button class="btn danger" id="stop">Interromper</button>
       </div>
+      <button class="btn" id="instr" style="margin-top:8px;width:100%">Registrar como instrução (a IA lembra até ser revogada)</button>
       <p class="modeHelp" id="sayHelp"></p>
     </div>
     <div class="card c-toggles">
       <div class="toggle"><span>Visão da IA (enviar imagem)</span><button class="switch" id="vision" role="switch" aria-checked="true"></button></div>
-      <div class="toggle"><span>Voz robótica (IA e operador iguais)</span><button class="switch" id="robotVoice" role="switch" aria-checked="false"></button></div>
+      <div class="toggle slider"><span>Voz robótica (IA e operador iguais)</span><output id="robotVal">0 %</output>
+        <input type="range" id="robotLevel" min="0" max="100" step="5" value="0" aria-label="Grau da voz robótica"></div>
       <div class="toggle"><span>Corpo 3D (gestos com braços e mãos)</span><button class="switch" id="body3d" role="switch" aria-checked="false"></button></div>
     </div>
     <div class="card c-state">
@@ -223,6 +235,7 @@
         <dt>Resposta</dt><dd id="a">—</dd>
         <dt>Expressão</dt><dd id="emo">—</dd>
         <dt>Gesto</dt><dd id="gest">—</dd>
+        <dt>Áudio</dt><dd id="audioInfo">—</dd>
         <dt>Rostos</dt><dd id="faces">—</dd>
         <dt>Latência</dt><dd id="rtt">—</dd>
       </dl>
@@ -322,9 +335,12 @@ function onMessage(m) {
   $("emo").textContent = m.expressao || "—"; $("faces").textContent = m.rostos ?? "—";
   if (m.modo && m.modo !== mode) setMode(m.modo, false);
   $("vision").setAttribute("aria-checked", String(!!m.visao));
-  $("robotVoice").setAttribute("aria-checked", String(!!m.voz_robotica));
+  if (m.voz_robotica_nivel !== undefined && !robotDrag) { $("robotLevel").value = m.voz_robotica_nivel; $("robotVal").textContent = m.voz_robotica_nivel + " %"; }
   $("body3d").setAttribute("aria-checked", String(!!m.corpo3d));
   $("gest").textContent = m.gesto || "—";
+  if (m.fps) $("fpsText").textContent = "AO VIVO · " + m.fps + " FPS";
+  const eco = { eco: "eco cancelado (fala simultânea)", fone: "fone de ouvido", meia: "meia-via (mudo enquanto fala)" }[m.eco];
+  $("audioInfo").textContent = (eco || "—") + (m.continua ? " · conversa contínua no robô" : "");
   $("bodyHelp").textContent = m.corpo3d ? "Corpo 3D ligado: o gesto aparece na tela do robô."
                                         : "Corpo 3D desligado: o robô mostra só um aviso do gesto. Ligue a chave “Corpo 3D”.";
 }
@@ -337,11 +353,24 @@ function setMode(m, notify = true) {
   if (notify) send({ tipo: "mode", modo: m });
 }
 
+let pttLocked = false, pttStartY = null;
+function talkLabel() {
+  $("talk").classList.toggle("live", pttOn && !pttLocked);
+  $("talk").classList.toggle("locked", pttLocked);
+  $("talk").textContent = pttLocked ? "Microfone travado · toque para soltar" : pttOn ? "Falando… solte para parar" : "Segure para falar";
+  $("lockHint").classList.toggle("show", pttOn && !pttLocked);
+}
 function talk(on) {
   if (!micTrack || pttOn === on) return;
   pttOn = on; micTrack.enabled = on;
-  $("talk").classList.toggle("live", on); $("talk").textContent = on ? "Falando… solte para parar" : "Segure para falar";
+  if (!on) pttLocked = false;
+  talkLabel();
   send({ tipo: "ptt", ligado: on });
+}
+function lockTalk() {                     // conversa livre: microfone aberto até tocar de novo
+  if (!micTrack) return;
+  talk(true); pttLocked = true; talkLabel();
+  if (navigator.vibrate) navigator.vibrate([10, 40, 10]);
 }
 
 $("enter").onclick = connect;
@@ -349,31 +378,45 @@ $("pin").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); 
 document.querySelectorAll(".seg button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
 document.querySelectorAll("#expr button").forEach((b) => (b.onclick = () => send({ tipo: "expression", nome: b.dataset.e })));
 document.querySelectorAll("#gestures button").forEach((b) => (b.onclick = () => send({ tipo: "gesture", nome: b.dataset.g })));
+$("instr").onclick = () => { const t = $("sayText").value.trim(); if (t) { send({ tipo: "instruction", texto: t }); $("sayText").value = ""; } };
 $("say").onclick = () => { const t = $("sayText").value.trim(); if (t) { send({ tipo: "say", texto: t }); $("sayText").value = ""; } };
 $("stop").onclick = () => send({ tipo: "interrupt" });
 $("stopBar").onclick = () => send({ tipo: "interrupt" });
 document.querySelectorAll(".toggle > span").forEach((s) => (s.onclick = () => s.nextElementSibling.click()));
-for (const id of ["vision", "robotVoice", "body3d"]) {
+let robotDrag = false, robotLast = 0;
+$("robotLevel").addEventListener("input", (e) => {
+  robotDrag = true; $("robotVal").textContent = e.target.value + " %";
+  if (performance.now() - robotLast > 120) { robotLast = performance.now(); send({ tipo: "robot_voice", nivel: +e.target.value, final: false }); }
+});
+$("robotLevel").addEventListener("change", (e) => { robotDrag = false; send({ tipo: "robot_voice", nivel: +e.target.value, final: true }); });
+for (const id of ["vision", "body3d"]) {
   $(id).onclick = () => {
     const on = $(id).getAttribute("aria-checked") !== "true";
     $(id).setAttribute("aria-checked", String(on));
-    send({ tipo: { vision: "vision", robotVoice: "robot_voice", body3d: "body" }[id], ligado: on });
+    send({ tipo: { vision: "vision", body3d: "body" }[id], ligado: on });
   };
 }
 const talkBtn = $("talk");
 talkBtn.addEventListener("pointerdown", (e) => {
+  if (pttLocked) { talk(false); pttStartY = null; return; }     // travado: um toque solta
+  pttStartY = e.clientY;
   talk(true);
   if (navigator.vibrate) navigator.vibrate(12);              // retorno tátil no Android
   try { talkBtn.setPointerCapture(e.pointerId); } catch (_) {}
 });
-talkBtn.addEventListener("contextmenu", (e) => e.preventDefault());
-talkBtn.addEventListener("pointerup", () => talk(false));
-talkBtn.addEventListener("pointercancel", () => talk(false));
-document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && !e.repeat && document.activeElement.tagName !== "TEXTAREA" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); talk(true); }
+talkBtn.addEventListener("pointermove", (e) => {
+  if (pttOn && !pttLocked && pttStartY !== null && pttStartY - e.clientY > 60) lockTalk();   // deslizou para cima
 });
-document.addEventListener("keyup", (e) => { if (e.code === "Space") talk(false); });
-window.addEventListener("blur", () => talk(false));
+talkBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+talkBtn.addEventListener("pointerup", () => { pttStartY = null; if (!pttLocked) talk(false); });
+talkBtn.addEventListener("pointercancel", () => { pttStartY = null; if (!pttLocked) talk(false); });
+const typing = () => ["TEXTAREA", "INPUT"].includes(document.activeElement.tagName);
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !e.repeat && !typing()) { e.preventDefault(); if (!pttLocked) talk(true); }
+  if (e.code === "KeyT" && !e.repeat && !typing()) { e.preventDefault(); pttLocked ? talk(false) : lockTalk(); }
+});
+document.addEventListener("keyup", (e) => { if (e.code === "Space" && !pttLocked) talk(false); });
+window.addEventListener("blur", () => { if (!pttLocked) talk(false); });
 $("videoBox").addEventListener("click", (e) => {
   const r = $("videoBox").getBoundingClientRect();
   const u = (e.clientX - r.left) / r.width, v = (e.clientY - r.top) / r.height;

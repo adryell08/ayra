@@ -244,14 +244,14 @@ def test_settings():
     m.view = "root"
     import theme
     roots = [i[0] for i in m.items(hud, theme.SCHEMES["dark"])]
-    check("aba Arduino no menu de Ajustes", "arduino" in roots)
-    consumed, action = m.activate("arduino")
-    items = m.items(hud, theme.SCHEMES["dark"])
-    check("aba lista painel, porta, brilho, tamanho, teste e montagem",
-          m.view == "arduino" and [i[0].split(":")[1] for i in items] ==
+    check("painel LED aparece em Ajustes → Conexões", "remote" in roots)
+    consumed, action = m.activate("remote")
+    items = [i for i in m.items(hud, theme.SCHEMES["dark"]) if i[0].startswith("arduino:")]
+    check("Conexões lista painel, porta, brilho, tamanho, teste e montagem",
+          m.view == "remote" and [i[0].split(":")[1] for i in items] ==
           ["enabled", "port", "brightness", "size", "test", "order", "rotate", "mirror", "flip"])
     consumed, action = m.activate("arduino:rotate")
-    check("tocar num ajuste mantém a aba aberta e devolve a ação", m.open is False or m.view == "arduino")
+    check("tocar num ajuste mantém a aba aberta e devolve a ação", m.open is False or m.view == "remote")
     check("ação chega ao app", action == "arduino:rotate")
 
 

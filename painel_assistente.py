@@ -40,6 +40,7 @@ class AssistantPanel:
         self.mic = pygame.Rect(0, 0, 0, 0)
         self.type_btn = pygame.Rect(0, 0, 0, 0)
         self.vis_btn = pygame.Rect(0, 0, 0, 0)
+        self.rep_btn = pygame.Rect(0, 0, 0, 0)
         self.typing = False
         self.draft = ""
         self._pressed: Optional[str] = None
@@ -52,6 +53,9 @@ class AssistantPanel:
         self._live_seq = -1
         self._live_surf: Optional[pygame.Surface] = None
         self._sent_at = -1e9           # quando a última foto foi enviada (miniatura "Enviada" no canto)
+        self._press_pos = None         # arrastar o botão de falar para cima trava o microfone
+        self._drag_locked = False
+        self.simple = False            # Modo de uso: só nome, estado, pergunta/resposta e o botão de falar
 
     # ---- geometria -----------------------------------------------------------
     def reserve(self, screen: pygame.Surface, s: float) -> int:
@@ -62,13 +66,19 @@ class AssistantPanel:
         s = r.s
         pad = int(theme.PADDING * s)
         w = sidebar_width(sw, s)
-        top = int(76 * s)                         # abaixo do indicador de câmera
+        top = int(76 * s) if not self.simple else pad     # abaixo do indicador de câmera
         self.rect = pygame.Rect(sw - w - pad // 2, top, w - pad // 2, sh - top - pad)
         inner = self.rect.inflate(-2 * pad, -2 * pad)
         btn_h = int(52 * s)
+        if self.simple:                           # Modo de uso: um único botão grande
+            btn_h = int(64 * s)
+            self.type_btn = self.vis_btn = self.rep_btn = pygame.Rect(0, 0, 0, 0)
+            self.mic = pygame.Rect(inner.x, inner.bottom - btn_h, inner.w, btn_h)
+            return
         self.type_btn = pygame.Rect(inner.right - int(52 * s), inner.bottom - btn_h, int(52 * s), btn_h)
         self.vis_btn = pygame.Rect(self.type_btn.x - int(60 * s), inner.bottom - btn_h, int(52 * s), btn_h)
-        self.mic = pygame.Rect(inner.x, inner.bottom - btn_h, self.vis_btn.x - inner.x - int(8 * s), btn_h)
+        self.rep_btn = pygame.Rect(self.vis_btn.x - int(60 * s), inner.bottom - btn_h, int(52 * s), btn_h)
+        self.mic = pygame.Rect(inner.x, inner.bottom - btn_h, self.rep_btn.x - inner.x - int(8 * s), btn_h)
 
     # ---- eventos -------------------------------------------------------------
     def handle_event(self, ev, assistant) -> bool:
@@ -102,6 +112,9 @@ class AssistantPanel:
             if ev.key == pygame.K_v:
                 assistant.set_vision(not assistant.snapshot().vision)
                 return True
+            if ev.key == pygame.K_l and hasattr(assistant, "set_continuous"):
+                assistant.set_continuous(not getattr(assistant, "continuous", False))
+                return True
             if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self._start_typing()
                 return True
@@ -111,17 +124,30 @@ class AssistantPanel:
         if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
             target = self._target(ev.pos)
             self._pressed = target
+            self._press_pos = ev.pos if target == "mic" else None
+            self._drag_locked = False
             if target:
                 return True
+        if ev.type == pygame.MOUSEMOTION and self._pressed == "mic" and self._press_pos is not None:
+            if (self._press_pos[1] - ev.pos[1] > max(40, self.mic.h) and hasattr(assistant, "set_continuous")
+                    and not getattr(assistant, "continuous", False) and not self.typing):
+                assistant.set_continuous(True)             # arrastou para cima: microfone travado (conversa contínua)
+                self._drag_locked, self._pressed, self._press_pos = True, None, None
+            return True
             if self.typing and not self.rect.collidepoint(ev.pos):
                 self._stop_typing()
             return self.rect.collidepoint(ev.pos)
         if ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
-            pressed, self._pressed = self._pressed, None
+            pressed, self._pressed, self._press_pos = self._pressed, None, None
+            if self._drag_locked:
+                self._drag_locked = False
+                return True
             target = self._target(ev.pos)
             if pressed and pressed == target:
                 if target == "vision":
                     assistant.set_vision(not assistant.snapshot().vision)
+                elif target == "repeat":
+                    assistant.repeat_last()
                 elif target == "mic":
                     if self.typing and self.draft.strip():
                         if assistant.ask_text(self.draft):
@@ -138,7 +164,7 @@ class AssistantPanel:
         return False
 
     def _target(self, pos):
-        for name, rect in (("mic", self.mic), ("vision", self.vis_btn), ("type", self.type_btn)):
+        for name, rect in (("mic", self.mic), ("vision", self.vis_btn), ("repeat", self.rep_btn), ("type", self.type_btn)):
             if rect.collidepoint(pos):
                 return name
         return None
@@ -215,98 +241,100 @@ class AssistantPanel:
         self._marker(scr, mk, (pill.x + int(16 * s), pill.centery), size, col, s)
         scr.blit(st, (pill.x + int(28 * s), pill.centery - st.get_height() // 2))
         y += title.get_height() + int(4 * s)
-        sub = config_label or assistant.backend_label()
-        scr.blit(r._text("footnote", r._fit("footnote", sub, w), sc.text_dim), (x, y))
+        if not self.simple:
+            sub = config_label or assistant.backend_label()
+            scr.blit(r._text("footnote", r._fit("footnote", sub, w), sc.text_dim), (x, y))
         y += int(26 * s)
 
-        # câmera ao vivo (só nesta tela) + foto enviada à IA no canto
-        frame, seq = self.live
-        if frame is None:
-            self._live_surf, self._live_seq = None, -1
-        elif seq != self._live_seq:
-            self._live_seq, self._live_surf = seq, self._surface_from(frame)
-        live = self._live_surf is not None
-        section = ("CÂMERA AO VIVO" if snap.vision else "CÂMERA AO VIVO · VISÃO PAUSADA") if live else \
-            ("IMAGEM CAPTURADA" if snap.vision else "VISÃO PAUSADA")
-        scr.blit(r._text("section", section, sc.text_dim), (x, y))
-        y += int(22 * s)
-        img_h = int(w * 9 / 16)
-        avail = self.mic.top - y - int(190 * s)
-        img_h = max(int(90 * s), min(img_h, avail))
-        img_rect = pygame.Rect(x, y, w, img_h)
-        radius = int(14 * s)
-        if snap.image is not None and snap.image_version != self._image_version:
-            self._image_version = snap.image_version
-            self._image_surf = self._surface_from(snap.image)
-            self._fade = 0.0 if not reduce_motion else 1.0
-            self._sent_at = self._time
-        pygame.draw.rect(scr, mix(sc.chip, sc.text, .07), img_rect, border_radius=radius)
-        if live:
-            iw, ih = self._live_surf.get_size()
-            k = max(img_rect.w / iw, img_rect.h / ih)                 # preenche o quadro (corta as sobras)
-            big = pygame.transform.smoothscale(self._live_surf, (max(1, int(iw * k)), max(1, int(ih * k))))
-            crop = big.subsurface(pygame.Rect((big.get_width() - img_rect.w) // 2, (big.get_height() - img_rect.h) // 2,
-                                              img_rect.w, img_rect.h))
-            view = self._rounded(crop, radius)
-            if not snap.vision:
-                view.set_alpha(150)
-            scr.blit(view, img_rect)
-            chip = r._text("caption", "Ao vivo", (255, 255, 255))
-            cr = pygame.Rect(img_rect.x + int(8 * s), img_rect.y + int(8 * s), chip.get_width() + int(26 * s),
-                             max(int(24 * s), chip.get_height() + int(6 * s)))
-            pill = pygame.Surface(cr.size, pygame.SRCALPHA)
-            pygame.draw.rect(pill, (0, 0, 0, 150), pill.get_rect(), border_radius=cr.h // 2)
-            scr.blit(pill, cr)
-            pygame.draw.circle(scr, pal["red"], (cr.x + int(11 * s), cr.centery), max(3, int(4 * s)))
-            scr.blit(chip, (cr.x + int(19 * s), cr.centery - chip.get_height() // 2))
-            recent = self._time - self._sent_at < 8.0 or snap.state in ("capturing", "thinking", "speaking")
-            if self._image_surf is not None and snap.vision and recent:
-                tw = int(img_rect.w * .36)
-                th_ = int(tw * self._image_surf.get_height() / self._image_surf.get_width())
-                thumb = pygame.transform.smoothscale(self._image_surf, (tw, th_))
-                tr = thumb.get_rect(bottomright=(img_rect.right - int(8 * s), img_rect.bottom - int(8 * s)))
+        if not self.simple:
+            # câmera ao vivo (só nesta tela) + foto enviada à IA no canto
+            frame, seq = self.live
+            if frame is None:
+                self._live_surf, self._live_seq = None, -1
+            elif seq != self._live_seq:
+                self._live_seq, self._live_surf = seq, self._surface_from(frame)
+            live = self._live_surf is not None
+            section = ("CÂMERA AO VIVO" if snap.vision else "CÂMERA AO VIVO · VISÃO PAUSADA") if live else \
+                ("IMAGEM CAPTURADA" if snap.vision else "VISÃO PAUSADA")
+            scr.blit(r._text("section", section, sc.text_dim), (x, y))
+            y += int(22 * s)
+            img_h = int(w * 9 / 16)
+            avail = self.mic.top - y - int(190 * s)
+            img_h = max(int(90 * s), min(img_h, avail))
+            img_rect = pygame.Rect(x, y, w, img_h)
+            radius = int(14 * s)
+            if snap.image is not None and snap.image_version != self._image_version:
+                self._image_version = snap.image_version
+                self._image_surf = self._surface_from(snap.image)
+                self._fade = 0.0 if not reduce_motion else 1.0
+                self._sent_at = self._time
+            pygame.draw.rect(scr, mix(sc.chip, sc.text, .07), img_rect, border_radius=radius)
+            if live:
+                iw, ih = self._live_surf.get_size()
+                k = max(img_rect.w / iw, img_rect.h / ih)                 # preenche o quadro (corta as sobras)
+                big = pygame.transform.smoothscale(self._live_surf, (max(1, int(iw * k)), max(1, int(ih * k))))
+                crop = big.subsurface(pygame.Rect((big.get_width() - img_rect.w) // 2, (big.get_height() - img_rect.h) // 2,
+                                                  img_rect.w, img_rect.h))
+                view = self._rounded(crop, radius)
+                if not snap.vision:
+                    view.set_alpha(150)
+                scr.blit(view, img_rect)
+                chip = r._text("caption", "Ao vivo", (255, 255, 255))
+                cr = pygame.Rect(img_rect.x + int(8 * s), img_rect.y + int(8 * s), chip.get_width() + int(26 * s),
+                                 max(int(24 * s), chip.get_height() + int(6 * s)))
+                pill = pygame.Surface(cr.size, pygame.SRCALPHA)
+                pygame.draw.rect(pill, (0, 0, 0, 150), pill.get_rect(), border_radius=cr.h // 2)
+                scr.blit(pill, cr)
+                pygame.draw.circle(scr, pal["red"], (cr.x + int(11 * s), cr.centery), max(3, int(4 * s)))
+                scr.blit(chip, (cr.x + int(19 * s), cr.centery - chip.get_height() // 2))
+                recent = self._time - self._sent_at < 8.0 or snap.state in ("capturing", "thinking", "speaking")
+                if self._image_surf is not None and snap.vision and recent:
+                    tw = int(img_rect.w * .36)
+                    th_ = int(tw * self._image_surf.get_height() / self._image_surf.get_width())
+                    thumb = pygame.transform.smoothscale(self._image_surf, (tw, th_))
+                    tr = thumb.get_rect(bottomright=(img_rect.right - int(8 * s), img_rect.bottom - int(8 * s)))
+                    self._fade = min(1.0, self._fade + dt / 0.25)
+                    frame_r = tr.inflate(int(4 * s), int(4 * s))
+                    pygame.draw.rect(scr, (255, 255, 255), frame_r, border_radius=int(8 * s))
+                    t2 = self._rounded(thumb, int(6 * s))
+                    t2.set_alpha(int(255 * self._fade))
+                    scr.blit(t2, tr)
+                    lab = r._text("caption", "Enviada", (255, 255, 255))
+                    lr = pygame.Rect(0, 0, lab.get_width() + int(12 * s), lab.get_height() + int(2 * s))
+                    lr.bottomleft = (tr.x + int(4 * s), tr.bottom - int(4 * s))
+                    bg = pygame.Surface(lr.size, pygame.SRCALPHA)
+                    pygame.draw.rect(bg, (0, 0, 0, 160), bg.get_rect(), border_radius=lr.h // 2)
+                    scr.blit(bg, lr)
+                    scr.blit(lab, (lr.x + int(6 * s), lr.y + int(1 * s)))
+            elif self._image_surf is not None and snap.vision:
+                iw, ih = self._image_surf.get_size()
+                k = min(img_rect.w / iw, img_rect.h / ih)
+                fit = pygame.transform.smoothscale(self._image_surf, (max(1, int(iw * k)), max(1, int(ih * k))))
+                fit = self._rounded(fit, radius)
                 self._fade = min(1.0, self._fade + dt / 0.25)
-                frame_r = tr.inflate(int(4 * s), int(4 * s))
-                pygame.draw.rect(scr, (255, 255, 255), frame_r, border_radius=int(8 * s))
-                t2 = self._rounded(thumb, int(6 * s))
-                t2.set_alpha(int(255 * self._fade))
-                scr.blit(t2, tr)
-                lab = r._text("caption", "Enviada", (255, 255, 255))
-                lr = pygame.Rect(0, 0, lab.get_width() + int(12 * s), lab.get_height() + int(2 * s))
-                lr.bottomleft = (tr.x + int(4 * s), tr.bottom - int(4 * s))
-                bg = pygame.Surface(lr.size, pygame.SRCALPHA)
-                pygame.draw.rect(bg, (0, 0, 0, 160), bg.get_rect(), border_radius=lr.h // 2)
-                scr.blit(bg, lr)
-                scr.blit(lab, (lr.x + int(6 * s), lr.y + int(1 * s)))
-        elif self._image_surf is not None and snap.vision:
-            iw, ih = self._image_surf.get_size()
-            k = min(img_rect.w / iw, img_rect.h / ih)
-            fit = pygame.transform.smoothscale(self._image_surf, (max(1, int(iw * k)), max(1, int(ih * k))))
-            fit = self._rounded(fit, radius)
-            self._fade = min(1.0, self._fade + dt / 0.25)
-            fit.set_alpha(int(255 * self._fade))
-            scr.blit(fit, fit.get_rect(center=img_rect.center))
-        else:
-            hint = r._wrap("footnote", "A foto aparece aqui quando você fizer uma pergunta." if snap.vision else
-                           "Só conversa: nenhuma imagem é enviada. V ou o botão da câmera retomam.", w - 4 * pad)
-            yy = img_rect.centery - len(hint) * int(9 * s)
-            for line in hint:
-                t = r._text("footnote", line, sc.text_dim)
-                scr.blit(t, (img_rect.centerx - t.get_width() // 2, yy))
-                yy += t.get_height()
-        if snap.state == "capturing" and not reduce_motion:
-            flash = pygame.Surface(img_rect.size, pygame.SRCALPHA)
-            a = int(90 * (0.5 + 0.5 * math.sin(self._time * 9)))
-            pygame.draw.rect(flash, (255, 255, 255, a), flash.get_rect(), border_radius=radius)
-            scr.blit(flash, img_rect)
-        y = img_rect.bottom + int(6 * s)
-        if live:
-            note = ("Ao vivo só nesta tela · a IA recebe 1 foto por pergunta" if snap.vision
-                    else "Visão pausada: nada é enviado à IA")
-            scr.blit(r._text("caption", r._fit("caption", note, w), sc.text_dim), (x, y))
-        elif self._image_surf is not None and snap.vision:
-            scr.blit(r._text("caption", r._fit("caption", "Enviada à IA só para esta pergunta · não é salva", w), sc.text_dim), (x, y))
-        y += int(26 * s)
+                fit.set_alpha(int(255 * self._fade))
+                scr.blit(fit, fit.get_rect(center=img_rect.center))
+            else:
+                hint = r._wrap("footnote", "A foto aparece aqui quando você fizer uma pergunta." if snap.vision else
+                               "Só conversa: nenhuma imagem é enviada. V ou o botão da câmera retomam.", w - 4 * pad)
+                yy = img_rect.centery - len(hint) * int(9 * s)
+                for line in hint:
+                    t = r._text("footnote", line, sc.text_dim)
+                    scr.blit(t, (img_rect.centerx - t.get_width() // 2, yy))
+                    yy += t.get_height()
+            if snap.state == "capturing" and not reduce_motion:
+                flash = pygame.Surface(img_rect.size, pygame.SRCALPHA)
+                a = int(90 * (0.5 + 0.5 * math.sin(self._time * 9)))
+                pygame.draw.rect(flash, (255, 255, 255, a), flash.get_rect(), border_radius=radius)
+                scr.blit(flash, img_rect)
+            y = img_rect.bottom + int(6 * s)
+            if live:
+                note = ("Ao vivo só nesta tela · a IA recebe 1 foto por pergunta" if snap.vision
+                        else "Visão pausada: nada é enviado à IA")
+                scr.blit(r._text("caption", r._fit("caption", note, w), sc.text_dim), (x, y))
+            elif self._image_surf is not None and snap.vision:
+                scr.blit(r._text("caption", r._fit("caption", "Enviada à IA só para esta pergunta · não é salva", w), sc.text_dim), (x, y))
+            y += int(26 * s)
 
         # pergunta
         scr.blit(r._text("section", "PERGUNTA", sc.text_dim), (x, y))
@@ -376,7 +404,7 @@ class AssistantPanel:
                 y += lh
 
         # tempos (evidência de latência)
-        if snap.timings and snap.state in ("speaking", "idle"):
+        if snap.timings and snap.state in ("speaking", "idle") and not getattr(snap, "continuous", False) and not self.simple:
             names = dict(stt="transcrição", ia="IA", voz="voz", total_ate_falar="até falar",
                          primeiro_audio="1ª fala em", resposta_completa="resposta")
             parts = [f"{names[k]} {v:.1f} s".replace(".", ",") for k, v in snap.timings.items() if k in names]
@@ -385,12 +413,25 @@ class AssistantPanel:
 
         # botões
         self._draw_mic(r, snap, reduce_motion)
-        self._draw_vision_button(r, snap.vision)
-        self._draw_type_button(r)
+        if not self.simple:
+            self._draw_vision_button(r, snap.vision)
+            self._draw_repeat_button(r, assistant.can_repeat())
+            self._draw_type_button(r)
 
     def _draw_mic(self, r, snap, reduce_motion):
         sc, s, scr, pal = r.scheme, r.s, r.screen, r.scheme.palette
         st = snap.state
+        locked = bool(getattr(snap, "continuous", False))
+        if locked and not (self.typing and self.draft.strip()):
+            label = {"listening": "Ouvindo…", "speaking": "Fale por cima", "thinking": "Pensando…",
+                     "capturing": "Pensando…"}.get(st, "Microfone travado")
+            base, enabled = mix(pal["green"], (0, 0, 0), .3), True
+            if snap.mode == "teleoperado":
+                label = "Em ligação"
+            self._paint_mic(r, snap, label, base, enabled, reduce_motion, lock=True)
+            note = r._text("caption", "Conversa contínua · toque no botão para encerrar", sc.text_dim)
+            scr.blit(note, (self.mic.x, self.mic.top - note.get_height() - int(6 * s)))
+            return
         if self.typing and self.draft.strip():
             label, base, enabled = "Enviar pergunta", pal["blue"], True
         elif st == "listening":
@@ -403,6 +444,17 @@ class AssistantPanel:
             label, base, enabled = "Processando…", mix(sc.chip, sc.text, .25), False
         else:
             label, base, enabled = "Clique para falar", pal["blue"], True
+        self._paint_mic(r, snap, label, base, enabled, reduce_motion)
+        if self._pressed == "mic" and not self.typing and st in ("idle", "error", "speaking", "listening"):
+            hint = r._text("caption", "↑ Arraste para travar", sc.text)
+            hr = pygame.Rect(0, 0, hint.get_width() + int(20 * s), hint.get_height() + int(10 * s))
+            hr.midbottom = (self.mic.centerx, self.mic.top - int(8 * s))
+            pygame.draw.rect(scr, sc.chip, hr, border_radius=hr.h // 2)
+            scr.blit(hint, hint.get_rect(center=hr.center))
+
+    def _paint_mic(self, r, snap, label, base, enabled, reduce_motion, lock=False):
+        sc, s, scr, pal = r.scheme, r.s, r.screen, r.scheme.palette
+        st = snap.state
         pressed = self._pressed == "mic"
         color = mix(base, (0, 0, 0), .15) if pressed else base
         if sc.key == "contrast":
@@ -415,14 +467,23 @@ class AssistantPanel:
         if sc.key == "contrast":
             pygame.draw.rect(scr, (255, 255, 255), rect, max(2, int(2 * s)), border_radius=rect.h // 2)
         fg = (255, 255, 255) if enabled or sc.key == "contrast" else sc.text_dim
-        text = r._text("headline", label, fg)
         icon_w = int(22 * s)
+        text = r._text("headline", r._fit("headline", label, rect.w - icon_w - int(34 * s)), fg)
         total = icon_w + int(10 * s) + text.get_width()
         x0 = rect.centerx - total // 2
         sending = self.typing and self.draft.strip()
-        self._mic_icon(scr, (x0 + icon_w // 2, rect.centery), s, fg, square=st == "listening" and not sending,
-                       arrow=bool(sending))
+        if lock:
+            self._lock_icon(scr, (x0 + icon_w // 2, rect.centery), s, fg)
+        else:
+            self._mic_icon(scr, (x0 + icon_w // 2, rect.centery), s, fg, square=st == "listening" and not sending,
+                           arrow=bool(sending))
         scr.blit(text, (x0 + icon_w + int(10 * s), rect.centery - text.get_height() // 2))
+
+    def _lock_icon(self, scr, c, s, color):
+        x, y = c
+        k = lambda n: max(1, round(n * s))
+        pygame.draw.rect(scr, color, (x - k(7), y - k(2), k(14), k(11)), border_radius=k(2))
+        pygame.draw.arc(scr, color, (x - k(5), y - k(10), k(10), k(14)), 0, math.pi, max(2, k(2)))
 
     def _mic_icon(self, scr, c, s, color, square=False, arrow=False):
         x, y = c
@@ -458,6 +519,20 @@ class AssistantPanel:
         if not on:                                     # risco diagonal = pausada (forma, não só cor)
             pygame.draw.line(scr, sc.chip, (x - k(13), y - k(11)), (x + k(13), y + k(11)), w + 3)
             pygame.draw.line(scr, sc.text, (x - k(13), y - k(11)), (x + k(13), y + k(11)), w)
+
+    def _draw_repeat_button(self, r, enabled: bool):
+        sc, s, scr = r.scheme, r.s, r.screen
+        rect = self.rep_btn
+        pressed = self._pressed == "repeat" and enabled
+        pygame.draw.rect(scr, mix(sc.chip, sc.text, .16 if pressed else .08), rect, border_radius=rect.h // 2)
+        if sc.key == "contrast":
+            pygame.draw.rect(scr, sc.separator, rect, max(1, int(2 * s)), border_radius=rect.h // 2)
+        color = sc.text if enabled else sc.text_dim
+        k = lambda n: max(1, round(n * s))
+        w = max(2, round(1.8 * s))
+        x, y = rect.center
+        pygame.draw.arc(scr, color, (x - k(10), y - k(10), k(20), k(20)), 0.6, 5.7, w)     # seta circular = repetir
+        pygame.draw.polygon(scr, color, [(x + k(9), y - k(10)), (x + k(10), y - k(2)), (x + k(3), y - k(5))])
 
     def _draw_type_button(self, r):
         sc, s, scr = r.scheme, r.s, r.screen

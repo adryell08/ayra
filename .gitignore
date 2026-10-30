@@ -31,3 +31,7 @@ Desktop.ini
 
 # Certificado HTTPS da sala do operador (gerado no primeiro uso).
 certs/
+
+*.db
+*.db-wal
+*.db-shm

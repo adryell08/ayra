@@ -75,3 +75,20 @@ class FrameMetrics:
             return None
         values = sorted(self.samples)
         return values[math.ceil(len(values) * 0.95) - 1]
+
+
+def thread_cpu() -> dict:
+    """CPU acumulada (s) por thread do processo, {id nativo: segundos}; vazio se o psutil não existir."""
+    try:
+        import psutil
+        return {th.id: th.user_time + th.system_time for th in psutil.Process().threads()}
+    except Exception:
+        return {}
+
+
+def thread_name(tid: int) -> str:
+    import threading
+    for th in threading.enumerate():
+        if getattr(th, "native_id", None) == tid:
+            return th.name
+    return "nativa-%d" % tid

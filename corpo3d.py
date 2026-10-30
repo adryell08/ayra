@@ -6,6 +6,7 @@ o app continua no 2D e explica o motivo.
 from __future__ import annotations
 
 import math
+import time
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -144,6 +145,12 @@ class Body3D:
         self.prog["face"].value = 0
         self.prog["face_gain"].value = 1.6
         self.samples = samples
+        # Qualidade adaptativa (ligada pelo app): do mais bonito ao mais leve, conforme o tempo real de desenho
+        # (suavização de borda MSAA, escala da imagem interna). Placa fraca ou Raspberry: desce sozinho.
+        self.adaptive = False
+        self.ladder = ((samples, 1.0), (min(samples, 2), 0.85), (0, 0.7), (0, 0.55))
+        self.q, self.scale = 0, 1.0
+        self.render_ms, self._renders, self._q_changed = 0.0, 0, 0.0
         self.size = (0, 0)
         self.face_tex = None
         self.face_size = (0, 0)
@@ -194,7 +201,8 @@ class Body3D:
     # ---- quadro -------------------------------------------------------------
     def render(self, size: Tuple[int, int], face: Optional[pygame.Surface], now: float, gaze=(0.0, 0.0),
                talk: float = 0.0, bg=(10, 12, 16), reduce_motion: bool = False) -> pygame.Surface:
-        w, h = max(16, int(size[0])), max(16, int(size[1]))
+        t_start = time.perf_counter()
+        w, h = max(16, int(size[0] * self.scale)), max(16, int(size[1] * self.scale))
         self._targets((w, h))
         self._face(face)
         pose = self.anim.pose(now, gaze, talk, reduce_motion)
@@ -223,7 +231,27 @@ class Body3D:
         if self.fbo_ms is not None:
             self.ctx.copy_framebuffer(self.fbo, self.fbo_ms)
         data = self.fbo.read(components=3, alignment=1)
-        return pygame.image.frombytes(data, (w, h), "RGB", True)
+        img = pygame.image.frombytes(data, (w, h), "RGB", True)
+        self._adapt((time.perf_counter() - t_start) * 1000.0)
+        return img
+
+    def _adapt(self, ms: float) -> None:
+        self.render_ms = ms if self._renders == 0 else 0.9 * self.render_ms + 0.1 * ms
+        self._renders += 1
+        if not self.adaptive or self._renders % 20:
+            return
+        now = time.perf_counter()
+        if self.render_ms > 14.0 and self.q < len(self.ladder) - 1:
+            self._set_quality(self.q + 1, now)                       # pesado: desce um degrau
+        elif (self.q > 0 and self.render_ms * (self.scale / self.ladder[self.q - 1][1]) ** 2 * 1.6 < 14.0
+              and now - self._q_changed > 15.0):
+            self._set_quality(self.q - 1, now)                       # folga de sobra e estável: sobe um degrau
+
+    def _set_quality(self, q: int, now: float) -> None:
+        self.q, self._q_changed = q, now
+        self.samples, self.scale = self.ladder[q]
+        self.size = (0, 0)                                           # recria os alvos de desenho
+        self._renders = 0
 
     def play(self, name: str, now: float) -> bool:
         return self.anim.play(name, now)

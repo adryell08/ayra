@@ -155,75 +155,126 @@ class MicStream:
     """Envia blocos de ~40 ms enquanto escuta; detecta o fim da fala localmente (mesmo VAD do Recorder).
 
     `run(stop, on_chunk)` bloqueia até: parada manual, silêncio após a fala, nada dito ou tempo máximo.
-    Devolve "speech" | "manual" | "silence" (nada dito). Se o dispositivo não abrir a 24 kHz,
-    captura na taxa padrão e converte (nunca declara uma taxa diferente da enviada).
+    Devolve "speech" | "manual" | "silence" (nada dito). Com `hub` (audio_duplex.AudioHub) o microfone é
+    compartilhado com o operador e chega com o eco do alto-falante já cancelado.
+    `listen(..., wait_for_speech=True)` é a conversa contínua: espera a pessoa começar a falar (sem prazo),
+    avisa em `on_speech_start` (para interromper a IA) e envia junto os 0,4 s anteriores (sem cortar a 1ª sílaba).
     """
 
     RATE = 24000
 
-    def __init__(self, max_seconds: float = 20.0, silence_after: float = 0.8, no_speech_timeout: float = 7.0):
+    def __init__(self, max_seconds: float = 20.0, silence_after: float = 0.8, no_speech_timeout: float = 7.0,
+                 hub=None):
         self.max_seconds, self.silence_after, self.no_speech_timeout = max_seconds, silence_after, no_speech_timeout
         self.level = 0.0
         self.capture_rate = self.RATE
+        self.hub = hub
 
     def run(self, stop: threading.Event, on_chunk: Callable[[np.ndarray], None]) -> str:
-        sd = _sd()
+        return self.listen(stop, on_chunk)
+
+    def listen(self, stop: threading.Event, on_chunk: Callable[[np.ndarray], None],
+               on_speech_start: Optional[Callable[[], None]] = None, wait_for_speech: bool = False) -> str:
         from realtime import resample
-        state = dict(floor=None, speech=False, last_voice=0.0, start=time.perf_counter(), warm=[], peak=0.0, recent=[])
+        state = dict(floor=None, speech=False, last_voice=0.0, start=time.perf_counter(), warm=[], peak=0.0,
+                     recent=[], voiced=0.0, started_at=None)
+        preroll: deque = deque()
+        lock = threading.Lock()
 
-        def callback(indata, frames, t, status):
-            block = indata[:, 0].copy()
-            pcm = resample(block, self.capture_rate, self.RATE)
-            on_chunk(pcm)
-            rms = float(np.sqrt(np.mean((block.astype(np.float32) / 32768.0) ** 2)))
+        def handle(pcm: np.ndarray, rms: float, dur: float) -> None:
             now = time.perf_counter()
-            if now - state["start"] < 0.3:
-                state["warm"].append(rms)
-                return
-            if state["floor"] is None:
-                state["floor"] = float(np.median(state["warm"])) if state["warm"] else 0.005
-            state["recent"] = (state["recent"] + [rms])[-100:]
-            if len(state["recent"]) >= 20:
-                state["floor"] = min(state["floor"] * 1.01 + 1e-5, float(np.percentile(state["recent"], 20)))
-            threshold = max(0.010, state["floor"] * 2.5)
-            self.level = min(1.0, rms / max(threshold * 4, 1e-4))
-            if rms > threshold:
-                state["peak"] = max(rms, state["peak"] * 0.995)
-            if rms > max(threshold, 0.22 * state["peak"]):
-                state["speech"], state["last_voice"] = True, now
+            with lock:
+                if wait_for_speech and state["started_at"] is None:
+                    preroll.append(pcm)
+                    while sum(len(c) for c in preroll) > int(self.RATE * 0.4):
+                        preroll.popleft()
+                else:
+                    on_chunk(pcm)
+                if now - state["start"] < 0.3:
+                    state["warm"].append(rms)
+                    return
+                if state["floor"] is None:
+                    state["floor"] = float(np.median(state["warm"])) if state["warm"] else 0.005
+                state["recent"] = (state["recent"] + [rms])[-100:]
+                if len(state["recent"]) >= 20:
+                    state["floor"] = min(state["floor"] * 1.01 + 1e-5, float(np.percentile(state["recent"], 20)))
+                threshold = max(0.010, state["floor"] * 2.5)
+                far = self.hub is not None and self.hub.far_active()
+                if far:
+                    threshold *= 2.0                       # robô falando: só voz clara vale (resto de eco não)
+                self.level = min(1.0, rms / max(threshold * 4, 1e-4))
+                if rms > threshold:
+                    state["peak"] = max(rms, state["peak"] * 0.995)
+                voiced = rms > max(threshold, 0.22 * state["peak"])
+                state["voiced"] = state["voiced"] + dur if voiced else 0.0
+                need = (0.25 if far else 0.12) if wait_for_speech else 0.0
+                if voiced and state["voiced"] >= need:
+                    if not state["speech"]:
+                        state["speech"] = True
+                        if wait_for_speech:
+                            state["started_at"] = now
+                            if on_speech_start:
+                                on_speech_start()
+                            for c in preroll:
+                                on_chunk(c)
+                            preroll.clear()
+                    state["last_voice"] = now
 
-        stream = None
-        for rate in (self.RATE, None):
+        sid = stream = None
+        if self.hub is not None:
             try:
-                if rate is None:
-                    rate = int(sd.query_devices(kind="input")["default_samplerate"])
-                self.capture_rate = rate
-                stream = sd.InputStream(samplerate=rate, channels=1, dtype="int16", blocksize=int(rate * 0.04),
-                                        callback=callback)
-                break
-            except Exception as error:
-                last = error
-        if stream is None:
-            raise VoiceError(f"Microfone indisponível: {last}")
+                sid = self.hub.subscribe(self.RATE, lambda pcm: handle(
+                    pcm, float(np.sqrt(np.mean((pcm.astype(np.float32) / 32768.0) ** 2))) if len(pcm) else 0.0,
+                    len(pcm) / self.RATE))
+                self.capture_rate = self.RATE
+            except Exception:
+                sid = None
+        if sid is None:
+            sd = _sd()
+
+            def callback(indata, frames, t, status):
+                block = indata[:, 0].copy()
+                handle(resample(block, self.capture_rate, self.RATE),
+                       float(np.sqrt(np.mean((block.astype(np.float32) / 32768.0) ** 2))), frames / self.capture_rate)
+            last = None
+            for rate in (self.RATE, None):
+                try:
+                    if rate is None:
+                        rate = int(sd.query_devices(kind="input")["default_samplerate"])
+                    self.capture_rate = rate
+                    stream = sd.InputStream(samplerate=rate, channels=1, dtype="int16", blocksize=int(rate * 0.04),
+                                            callback=callback)
+                    break
+                except Exception as error:
+                    last = error
+            if stream is None:
+                raise VoiceError(f"Microfone indisponível: {last}")
+        import contextlib
         reason = "silence"
-        with stream:
-            while True:
-                if stop.wait(0.02):
-                    reason = "manual"
-                    break
-                now = time.perf_counter()
-                elapsed = now - state["start"]
-                if elapsed > self.max_seconds:
-                    reason = "speech" if state["speech"] else "silence"
-                    break
-                if state["speech"] and now - state["last_voice"] > self.silence_after:
-                    reason = "speech"
-                    break
-                if not state["speech"] and elapsed > self.no_speech_timeout:
-                    reason = "silence"
-                    break
+        try:
+            with (stream if stream is not None else contextlib.nullcontext()):
+                while True:
+                    if stop.wait(0.02):
+                        reason = "manual"
+                        break
+                    now = time.perf_counter()
+                    began = state["started_at"] or state["start"]
+                    if (not wait_for_speech or state["speech"]) and now - began > self.max_seconds:
+                        reason = "speech" if state["speech"] else "silence"
+                        break
+                    if state["speech"] and now - state["last_voice"] > self.silence_after:
+                        reason = "speech"
+                        break
+                    if not wait_for_speech and not state["speech"] and now - state["start"] > self.no_speech_timeout:
+                        reason = "silence"
+                        break
+        finally:
+            if sid is not None:
+                self.hub.unsubscribe(sid)
         self.level = 0.0
         if reason == "manual" and not state["speech"] and time.perf_counter() - state["start"] < 0.6:
+            return "silence"
+        if reason == "manual" and wait_for_speech and not state["speech"]:
             return "silence"
         return reason
 
@@ -242,12 +293,30 @@ class StreamPlayer:
         self._level = 0.0
         self._stream = None
         self._cur = np.zeros(0, np.int16)
+        self.on_played: Optional[Callable[[np.ndarray], None]] = None   # referência do eco (audio_duplex)
+        self.base_prebuffer = int(self.RATE * 0.12)  # buffer de jitter: só começa a tocar com 120 ms na fila…
+        self.prebuffer = self.base_prebuffer         # …e aumenta sozinho (até 400 ms) se ainda faltar áudio
+        self.max_prebuffer = int(self.RATE * 0.40)
+        self.max_wait = 0.25                        # …ou depois de 250 ms (respostas curtíssimas)
+        self._last_underrun = 0.0
+        self._primed = False
+        self._wait_since = 0.0
+        self.underruns = 0
 
     def _callback(self, outdata, frames, t, status):
         out = np.zeros(frames, np.int16)
         filled = 0
         with self._lock:
-            while filled < frames:
+            if not self._primed:
+                queued = len(self._cur) + sum(len(c) for c in self._q)
+                if queued == 0:
+                    self._wait_since = 0.0
+                else:
+                    now = time.perf_counter()
+                    self._wait_since = self._wait_since or now
+                    if queued >= self.prebuffer or now - self._wait_since >= self.max_wait:
+                        self._primed = True
+            while self._primed and filled < frames:
                 if len(self._cur) == 0:
                     if not self._q:
                         break
@@ -256,18 +325,33 @@ class StreamPlayer:
                 out[filled:filled + take] = self._cur[:take]
                 self._cur = self._cur[take:]
                 filled += take
+            if self._primed and filled < frames:        # acabou a fila no meio do fluxo: junta de novo antes de tocar
+                self._primed, self._wait_since = False, 0.0
+                self.underruns += 1
+                self._last_underrun = time.perf_counter()
+                self.prebuffer = min(self.max_prebuffer, self.prebuffer + int(self.RATE * 0.04))   # +40 ms de folga
+            elif (self.prebuffer > self.base_prebuffer and time.perf_counter() - self._last_underrun > 20.0):
+                self.prebuffer -= int(self.RATE * 0.02)                 # estável há 20 s: reduz a folga (menos atraso)
+                self._last_underrun = time.perf_counter() - 15.0
             self._played += filled
         rms = float(np.sqrt(np.mean((out.astype(np.float32) / 32768.0) ** 2))) if frames else 0.0
         self._level = 0.6 * self._level + 0.4 * min(1.0, rms / 0.12)
         outdata[:, 0] = out
+        if self.on_played is not None:
+            try:
+                self.on_played(out)
+            except Exception:
+                pass
 
     def start(self) -> None:
         if self._stream is not None:
             return
         sd = _sd()
         try:
-            self._stream = sd.OutputStream(samplerate=self.RATE, channels=1, dtype="int16",
-                                           blocksize=int(self.RATE * 0.02), callback=self._callback)
+            # blocos de 40 ms e latência "alta": a thread de áudio precisa do GIL; com a interface a 60 quadros/s
+            # blocos de 20 ms atrasavam e o som picotava.
+            self._stream = sd.OutputStream(samplerate=self.RATE, channels=1, dtype="int16", latency="high",
+                                           blocksize=int(self.RATE * 0.04), callback=self._callback)
             self._stream.start()
         except Exception as error:
             self._stream = None
@@ -279,6 +363,7 @@ class StreamPlayer:
             self._q.clear()
             self._cur = np.zeros(0, np.int16)
             self._played = self._received = 0
+            self._primed, self._wait_since = False, 0.0
 
     def feed(self, pcm: np.ndarray) -> None:
         with self._lock:

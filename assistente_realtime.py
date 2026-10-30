@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
 import time
+import unicodedata
 import uuid
 from typing import Callable, Optional
 
@@ -88,6 +90,19 @@ def build_session(cfg) -> dict:
     return session
 
 
+_END_RE = re.compile(r"^(?:(?:ei|oi|ola|pode|por favor)\s+)*(?:(?:nuria|ayra)\s+)?(?:(?:pode|por favor)\s+)*"
+                     r"(?:encerrar|encerra|encerre|terminar|termina|finalizar|finaliza)\s+(?:a\s+|essa\s+|esta\s+)?"
+                     r"(?:conversa|escuta|ligacao)(?:\s+(?:por favor|agora|nuria|ayra))*$")
+
+
+def is_end_command(text: str) -> bool:
+    """Frase inequívoca para encerrar a escuta ("Nuria, encerrar conversa"); palavras soltas como "para" não valem."""
+    plain = unicodedata.normalize("NFD", (text or "").lower())
+    plain = re.sub(r"[^a-z ]+", " ", "".join(c for c in plain if unicodedata.category(c) != "Mn"))
+    plain = " ".join(plain.split())
+    return len(plain.split()) <= 7 and bool(_END_RE.match(plain))
+
+
 class RealtimeAssistant(Assistant):
     """Mesma interface do Assistant (painel e rosto não mudam), com o caminho Realtime por baixo."""
 
@@ -108,14 +123,24 @@ class RealtimeAssistant(Assistant):
         self._turn: dict = {}
         self._calls: dict = {}
         self._drain_thread: Optional[threading.Thread] = None
+        self._handoff = False                       # operador agiu desde a última resposta da IA: injeta resumo
+        self._op_t0: Optional[float] = None
+        self._last_audio: list = []                 # áudio da última resposta concluída (botão Repetir)
         self._mic_stop = threading.Event()
         self.events_log: list = []                # últimos eventos (diagnóstico/testes), sem áudio
         self._connect_lock = threading.Lock()
         self._op_live = False
         self._op_last = 0.0
+        self._op_voice = 0.0                       # último instante com voz do operador (não só ruído)
+        self._op_floor = None
+        self._op_pre: list = []                    # 150 ms antes da voz do operador (não corta a 1ª sílaba)
+        self.continuous = False
+        self._conv_stop = threading.Event()
+        self._conv_thread: Optional[threading.Thread] = None
         from filtro_voz import RobotVoice
         self.voice_filter = RobotVoice()
-        self.robot_voice = bool(getattr(config_loader(), "robot_voice", False))
+        cfg_level = int(getattr(config_loader(), "robot_level", 0) or 0)
+        self.robot_level = max(0, min(100, cfg_level)) / 100.0       # 0 = voz natural … 1 = totalmente robótica
 
     # ---- leitura -----------------------------------------------------------------
     def snapshot(self):
@@ -201,14 +226,99 @@ class RealtimeAssistant(Assistant):
         kind = "auth" if last and "Chave" in last else "network"
         raise ia.AIError(kind, last or "Não foi possível conectar à Realtime.")
 
-    def _restore_context(self) -> None:
-        """Sessão nova (queda ou troca de modelo): leva as últimas trocas como contexto textual."""
-        if not self.history:
+    def new_conversation(self) -> None:
+        super().new_conversation()
+        self._last_audio = []
+        self._session_key = None                    # força sessão nova no provedor (sem o contexto antigo)
+
+    def resume_session(self, session_id: str) -> int:
+        n = super().resume_session(session_id)
+        if n:
+            self._last_audio = []
+            self._session_key = None                # sessão nova; _restore_context leva as últimas trocas em texto
+        return n
+
+    def can_repeat(self) -> bool:
+        return bool(self._last_audio) and self._snap.state == "idle" and self._snap.mode != "teleoperado"
+
+    def repeat_last(self) -> bool:
+        """Toca de novo o áudio da última resposta, sem nova análise nem nova chamada à IA."""
+        if not self.can_repeat():
+            return False
+        chunks = list(self._last_audio)
+        self._start(lambda gen: self._repeat_flow(gen, chunks), "speaking")
+        return True
+
+    def _repeat_flow(self, gen, chunks) -> None:
+        self.player.begin()
+        try:
+            self.player.start()
+        except VoiceError as error:
+            self._set(gen, state="idle", message=str(error), message_kind="warning")
             return
-        recent = " | ".join(f"Usuário: {q} → Você: {a}" for q, a in self.history[-3:])
-        self._client.send({"type": "conversation.item.create", "item": {
-            "type": "message", "role": "user",
-            "content": [{"type": "input_text", "text": f"(Contexto da conversa anterior, não responda: {recent})"}]}})
+        for chunk in chunks:
+            self.player.feed(chunk)
+        self._set(gen, state="speaking", spoken_offline=False)
+        while self._alive(gen) and self.player.pending() > 0:
+            time.sleep(0.03)
+        time.sleep(0.12)
+        if self._alive(gen):
+            self._set(gen, state="idle", message="", message_kind="done")
+
+    def _end_by_voice(self, turn: dict) -> None:
+        """"Encerrar conversa": cancela a resposta em andamento e solta o microfone travado."""
+        turn["ended"] = True
+        self._interrupt()
+        if self.continuous:
+            self.set_continuous(False)
+        with self._lock:
+            self._gen += 1
+        self._set(state="idle", question="", answer="", message="Conversa encerrada.", message_kind="done")
+
+    def _restore_context(self) -> None:
+        """Sessão nova (queda ou troca de modelo): leva as últimas trocas e a memória (instruções vigentes) como texto."""
+        if self.history:
+            recent = " | ".join(f"Usuário: {q} → Você: {a}" for q, a in self.history[-3:])
+            self._client.send({"type": "conversation.item.create", "item": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": f"(Contexto da conversa anterior, não responda: {recent})"}]}})
+        self._send_memory_context(handoff=False, client=self._client)
+
+    def _send_memory_context(self, handoff: bool, client=None) -> None:
+        m = self._mem()
+        client = client or self._client
+        if m is None or client is None:
+            return
+        try:
+            m.flush(0.25 if not handoff else 0.05)
+            ctx = m.get_session_context(self.session_id, handoff=handoff)
+            if ctx:
+                client.send({"type": "conversation.item.create", "item": {
+                    "type": "message", "role": "user", "content": [{"type": "input_text", "text":
+                        f"(Memória do Nuria, não responda a este texto; use só quando for relevante: {ctx})"}]}})
+        except Exception:
+            pass                                          # falha da memória nunca interrompe a conversa
+
+    def memory_note(self, text: str) -> None:
+        """Mudança feita no painel de memória (revogar, editar…): avisa a sessão em andamento, sem pedir resposta."""
+        text = " ".join((text or "").split())[:400]
+        if text and self._client is not None and self._client.connected:
+            self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": f"(Atualização da memória, não responda a este texto: {text}.)"}]}})
+
+    def operator_instruction(self, text: str) -> bool:
+        """Instrução do operador: vale na hora para a IA (item na sessão) e fica gravada até ser revogada."""
+        text = " ".join((text or "").split())[:300]
+        if not text:
+            return False
+        m = self._mem()
+        if m is not None:
+            m.upsert_instruction(text, actor="operator", session_id=self.session_id)
+            self.mem_event("operator", "instruction", text)
+        if self._client is not None and self._client.connected:
+            self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
+                {"type": "input_text", "text": f"(Nova instrução do operador, vale até ser revogada; siga-a e não responda a este texto: {text})"}]}})
+        return True
 
     def _on_closed(self, reason: str) -> None:
         self.connection = "desconectado"
@@ -227,10 +337,104 @@ class RealtimeAssistant(Assistant):
             raise ia.AIError("network", f"A conexão com o {self.label} caiu. Tente de novo.") from error
 
     # ---- comandos -----------------------------------------------------------------------
+    # ---- conversa contínua (microfone travado) ----------------------------------------------------
+    def set_continuous(self, on: bool) -> None:
+        """Microfone sempre aberto: a pessoa fala quando quiser e pode interromper a IA com a voz."""
+        on = bool(on)
+        if on == self.continuous:
+            return
+        self.continuous = on
+        self._set(continuous=on)
+        if on:
+            self._mic_stop.set()                          # encerra uma escuta manual em andamento
+            self._conv_stop = threading.Event()
+            self._conv_thread = threading.Thread(target=self._conversation_loop, args=(self._conv_stop,),
+                                                 name="conversa-continua", daemon=True)
+            self._conv_thread.start()
+        else:
+            self._conv_stop.set()
+            if self._snap.state == "listening":
+                with self._lock:
+                    self._gen += 1
+                self._set(state="idle", message="", message_kind="")
+
+    def _conversation_loop(self, stop: threading.Event) -> None:
+        while not stop.is_set():
+            if self._snap.mode == "teleoperado" or self._op_live:
+                stop.wait(0.1)                            # o operador está com a palavra
+                continue
+            try:
+                self._ensure_session(self._gen)
+                if self._snap.state == "connecting":
+                    self._set(state="idle")
+            except Exception as error:
+                self._set(state="idle", message=str(error), message_kind="warning")
+                stop.wait(2.0)
+                continue
+            turn = {"gen": None, "t0": None}
+
+            def on_start():
+                if self._snap.state in ("thinking", "speaking", "capturing"):
+                    self._interrupt()                     # a pessoa falou por cima: a IA para na hora
+                with self._lock:
+                    self._gen += 1
+                    g = self._gen
+                turn["gen"], turn["t0"] = g, time.perf_counter()
+                self._new_turn(g, turn["t0"])
+                self._set(g, state="listening", question="", answer="", message="", message_kind="", timings={})
+                try:
+                    self._client.send({"type": "input_audio_buffer.clear"})
+                except (rt.TransportClosed, AttributeError):
+                    pass
+
+            def on_chunk(pcm):
+                g = turn["gen"]
+                if g is not None and self._alive(g) and self._client is not None and self._client.connected:
+                    try:
+                        self._client.send({"type": "input_audio_buffer.append", "audio": rt.b64_pcm(pcm)})
+                    except rt.TransportClosed:
+                        pass
+            try:
+                listen = getattr(self.mic, "listen", None)
+                reason = (listen(stop, on_chunk, on_speech_start=on_start, wait_for_speech=True) if listen
+                          else self.mic.run(stop, on_chunk))
+            except VoiceError as error:
+                self._set(state="idle", message=str(error), message_kind="warning")
+                stop.wait(2.0)
+                continue
+            g = turn["gen"]
+            if g is None or not self._alive(g):
+                continue
+            if reason != "speech" or stop.is_set():
+                try:
+                    self._client.send({"type": "input_audio_buffer.clear"})
+                except (rt.TransportClosed, AttributeError):
+                    pass
+                self._set(g, state="idle")
+                continue
+            t1 = time.perf_counter()
+            try:
+                image = self._capture(g) if self._snap.vision else None
+            except ia.AIError:
+                image = None
+            try:
+                self._send({"type": "input_audio_buffer.commit"})
+                if image is not None:
+                    self._send_image(image)
+                else:
+                    self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
+                        {"type": "input_text", "text": NO_VISION_NOTE}]}})
+                self._respond(g, t1, dict(escuta=t1 - turn["t0"]))
+            except ia.AIError as error:
+                self._fail(g, str(error))
+            # volta direto a ouvir: se a pessoa falar durante a resposta, interrompe (barge-in)
+
     def press_voice(self) -> str:
+        if self.continuous:
+            self.set_continuous(False)                     # toque/Espaço com o microfone travado: encerra
+            return "unlock"
         if self._snap.mode == "teleoperado":
-            self._set(message="Teleoperado: o operador remoto está no controle.", message_kind="warning")
-            return "teleop"
+            return "teleop"                                  # em silêncio: quem está na frente não vê que há operador
         st = self._snap.state
         if st == "listening":
             self._mic_stop.set()
@@ -258,7 +462,6 @@ class RealtimeAssistant(Assistant):
     def ask_text(self, text: str) -> bool:
         text = " ".join((text or "").split())
         if self._snap.mode == "teleoperado":
-            self._set(message="Teleoperado: o operador remoto está no controle.", message_kind="warning")
             return False
         if not text or self._snap.state in ("connecting", "capturing", "listening"):
             return False
@@ -275,6 +478,8 @@ class RealtimeAssistant(Assistant):
         self._set(state="idle", message="Cancelado.", message_kind="warning")
 
     def shutdown(self) -> None:
+        self._conv_stop.set()
+        self.continuous = False
         self.cancel()
         self._join(1.0)
         if self._client is not None:
@@ -304,7 +509,7 @@ class RealtimeAssistant(Assistant):
     # ---- fluxos (thread de trabalho) ---------------------------------------------------------
     def _new_turn(self, gen, t0):
         self._turn = dict(gen=gen, t0=t0, responding=False, audio_item=None, first_audio=None, done=False,
-                          text="", question="", interrupted=False, had_audio=False)
+                          text="", question="", interrupted=False, had_audio=False, id=uuid.uuid4().hex[:10])
         self._calls = {}
 
     def _voice_flow(self, gen: int) -> None:
@@ -361,6 +566,7 @@ class RealtimeAssistant(Assistant):
             return
         self._new_turn(gen, t0)
         self._turn["question"] = question
+        self.mem_event("user", "text", question, key=self._turn["id"] + ":q")
         self._set(gen, timings={}, question=question, answer="")
         image = self._capture(gen) if self._snap.vision else None
         text = question if image is not None else question + " " + NO_VISION_NOTE
@@ -392,6 +598,8 @@ class RealtimeAssistant(Assistant):
                 pass
 
     def _respond(self, gen, t_end, timings, response: Optional[dict] = None) -> None:
+        if self._turn.get("ended"):
+            return
         self._turn.update(t_end=t_end, timings=timings, responding=True)
         self._set(gen, state="thinking", answer="", action="", emotion="neutral")
         self.player.begin()
@@ -402,6 +610,9 @@ class RealtimeAssistant(Assistant):
             self._turn["no_audio"] = str(error)
         if not self._alive(gen):                          # cancelada (ex.: operador assumiu) antes de pedir a resposta
             return
+        if self._handoff:                                 # o operador agiu desde a última resposta: resumo antes de responder
+            self._handoff = False
+            self._send_memory_context(handoff=True)
         self._send({"type": "response.create", **({"response": response} if response else {})})
 
     # ---- eventos do servidor (thread de leitura) -------------------------------------------------
@@ -419,6 +630,10 @@ class RealtimeAssistant(Assistant):
             text = (event.get("transcript") or "").strip()
             if text and turn:
                 turn["question"] = text
+                if is_end_command(text) and self._snap.mode != "teleoperado":
+                    threading.Thread(target=self._end_by_voice, args=(turn,), daemon=True).start()
+                    return
+                self.mem_event("user", "utterance", text, key=turn.get("id", "") + ":q")
                 self._set(gen, question=text)
         elif kind == "response.created":
             if turn and turn.get("responding"):
@@ -432,9 +647,10 @@ class RealtimeAssistant(Assistant):
                 return
             pcm = np.frombuffer(base64.b64decode(event.get("delta", "")), dtype=np.int16)
             if self.robot_voice:
-                pcm = self.voice_filter.process(pcm)        # mesma "garganta" da voz do operador
+                pcm = self.voice_filter.process(pcm, level=self.robot_level)   # mesma "garganta" da voz do operador
             turn["audio_item"] = turn.get("audio_item") or event.get("item_id")
             turn["had_audio"] = True
+            turn.setdefault("pcm", []).append(pcm)
             self.player.feed(pcm)
             if turn.get("first_audio") is None:
                 turn["first_audio"] = time.perf_counter()
@@ -512,6 +728,7 @@ class RealtimeAssistant(Assistant):
         self._drop_images()
         if turn.get("text"):
             self.history = (self.history + [(turn.get("question") or self._snap.question, turn["text"])])[-6:]
+            self.mem_event("ai", "response", turn["text"], key=turn.get("id", "") + ":a")
         self._drain_thread = threading.Thread(target=self._finish_when_played, args=(gen,), daemon=True)
         self._drain_thread.start()
 
@@ -525,6 +742,9 @@ class RealtimeAssistant(Assistant):
         time.sleep(0.12)                                           # cauda do dispositivo de saída
         if not self._alive(gen) or turn.get("interrupted"):
             return
+        pcm = turn.get("pcm") or []
+        if pcm and sum(len(c) for c in pcm) <= 24000 * 90:       # até 90 s (≈4 MB); só respostas completas
+            self._last_audio = list(pcm)
         timings = dict(self._snap.timings)
         timings["resposta_completa"] = time.perf_counter() - turn.get("t_end", turn["t0"])
         warning = turn.get("no_audio", "")
@@ -545,13 +765,22 @@ class RealtimeAssistant(Assistant):
         if mode == "teleoperado" and self._snap.state in ("listening", "capturing", "thinking", "speaking") \
                 and not self._op_live:
             self.cancel()                                     # o operador assume: a IA para na hora
+        previous = self._snap.mode
         self._set(mode=mode, message="", message_kind="")
+        if mode != previous:
+            self.mem_event("system", "mode_change", mode, previous=previous)
+            m = self._mem()
+            if m is not None:
+                m.set_session_mode(self.session_id, mode)
+            if previous == "teleoperado":
+                self._handoff = True                      # a IA retoma: recebe resumo antes da próxima resposta
         return True
 
     def set_operator(self, name: str) -> None:
         self._set(operator=name or "")
         if not name:
             self._op_live = False
+            self._op_ended()
             if self._snap.mode == "teleoperado":
                 self._set(mode="autonomo")                    # operador saiu: a Ayra volta a conversar sozinha
 
@@ -560,6 +789,8 @@ class RealtimeAssistant(Assistant):
         text = " ".join((text or "").split())[:400]
         if not text:
             return False
+        self.mem_event("operator", "say", text)
+        self._handoff = True
         if self._snap.state in ("thinking", "speaking", "listening", "capturing"):
             self._interrupt()
             self._mic_stop.set()
@@ -573,7 +804,7 @@ class RealtimeAssistant(Assistant):
     def _local_say(self, gen, text) -> None:
         from filtro_voz import synthesize_local
         self._new_turn(gen, time.perf_counter())
-        self._set(gen, question="(operador)", answer=text, emotion="neutral", action="", timings={})
+        self._set(gen, question="", answer=text, emotion="neutral", action="", timings={})
         pcm = synthesize_local(text)
         if not self._alive(gen):
             return
@@ -583,7 +814,8 @@ class RealtimeAssistant(Assistant):
         else:
             if self.robot_voice:
                 self.voice_filter.reset()
-                pcm = np.concatenate([self.voice_filter.process(pcm[i:i + 960]) for i in range(0, len(pcm), 960)])
+                pcm = np.concatenate([self.voice_filter.process(pcm[i:i + 960], level=self.robot_level)
+                                      for i in range(0, len(pcm), 960)])
             self.player.begin()
             try:
                 self.player.start()
@@ -603,37 +835,81 @@ class RealtimeAssistant(Assistant):
         if not self._alive(gen):
             return
         self._new_turn(gen, t0)
-        self._turn["question"] = "(operador)"
-        self._set(gen, question="(operador)", timings={})
+        self._turn["question"] = ""
+        self._set(gen, question="", timings={})
         self._respond(gen, t0, {}, response={"instructions": INSTRUCTIONS + " Agora diga exatamente esta frase, "
                                              "com naturalidade e sem acrescentar nada: «" + text + "»"})
 
+    @property
+    def robot_voice(self) -> bool:
+        return self.robot_level > 0.0
+
+    @robot_voice.setter
+    def robot_voice(self, on: bool) -> None:
+        self.robot_level = (self.robot_level or 0.6) if on else 0.0
+
     def operator_audio(self, pcm: np.ndarray) -> None:
-        """Voz ao vivo do operador (24 kHz), enquanto ele segura "Falar". Interrompe a IA e sai pelo robô."""
+        """Voz ao vivo do operador (24 kHz), enquanto ele fala ("Falar" segurado ou travado).
+
+        Detecta voz (não só ruído): com o microfone travado, o silêncio do operador não ocupa o alto-falante,
+        não trava a IA e não mexe a boca. A voz interrompe a IA e sai pelo robô, com 150 ms de pré-roll.
+        """
         now = time.perf_counter()
+        pcm = np.asarray(pcm, dtype=np.int16)
+        rms = float(np.sqrt(np.mean((pcm.astype(np.float32) / 32768.0) ** 2))) if len(pcm) else 0.0
+        if self._op_floor is None:
+            self._op_floor = min(rms, 0.003)
+        elif rms < 2.5 * self._op_floor:
+            self._op_floor = 0.97 * self._op_floor + 0.03 * rms        # ruído de fundo do operador
+        else:
+            self._op_floor *= 1.002
+        voice = rms > max(0.012, 3.0 * self._op_floor)
+        if voice:
+            self._op_voice = now
         if not self._op_live:
+            self._op_pre = (self._op_pre + [pcm])[-8:]                  # ~160 ms antes da voz (não corta o início da frase)
+            if not voice:
+                return
             if self._snap.state in ("listening", "capturing", "thinking", "speaking"):
                 self._interrupt()
                 self._mic_stop.set()
             with self._lock:
                 self._gen += 1
             self._op_live = True
+            self._op_t0 = time.time()
             self.player.begin()
             self.voice_filter.reset()
             try:
                 self.player.start()
             except VoiceError:
                 pass
-            self._set(state="speaking", question="(voz do operador)", answer="", emotion="neutral", action="",
+            self._set(state="speaking", question="", answer="", emotion="neutral", action="",
                       spoken_offline=False, timings={}, message="", message_kind="")
-        if self.robot_voice:
-            pcm = self.voice_filter.process(pcm)
-        self.player.feed(pcm)
+            chunks, self._op_pre = self._op_pre[:-1], []
+        else:
+            chunks = []
+            if now - self._op_voice > 0.7:                              # pausa: devolve a palavra
+                self._op_live = False
+                self._op_ended()
+                self._set(state="idle", message_kind="done")
+                return
+        for chunk in chunks + [pcm]:
+            if self.robot_voice:
+                chunk = self.voice_filter.process(chunk, level=self.robot_level)
+            self.player.feed(chunk)
         self._op_last = now
+
+    def _op_ended(self) -> None:
+        """Fim de um trecho de fala do operador (sem transcrição): registra a duração e marca o resumo."""
+        started, self._op_t0 = self._op_t0, None
+        if started is not None:
+            self._handoff = True
+            self.mem_event("operator", "voice", "", segundos=round(time.time() - started, 1))
 
     def drive_robot(self, robot, now: float, prev_state: str) -> str:
         if self._op_live and time.perf_counter() - self._op_last > 0.6 and self.player.pending() == 0:
             self._op_live = False                              # operador soltou "Falar"
+            self._op_ended()
             self._set(state="idle", message_kind="done")
         return super().drive_robot(robot, now, prev_state)
 

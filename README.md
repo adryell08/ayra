@@ -37,16 +37,30 @@ iniciar.bat --sem-registro          :: não grava logs/sessoes.jsonl
 Estados (texto + forma): **Conectando · Pronta · Ouvindo · Capturando imagem · Pensando · Falando · Erro/Atenção**. A conexão é aberta ao iniciar o app
 e reaproveitada entre perguntas; o subtítulo da coluna mostra se está conectada.
 
+## Modo de uso (só interação)
+
+`iniciar.bat --uso` ou **Ajustes → Modo de uso**. Ficam só o rosto (ou corpo 3D), o botão grande de falar (arraste para cima
+para travar o microfone) e a conversa. Sem ajustes, diagnóstico, ajuda, dock nem painéis. Fica apenas um ponto de câmera
+(verde = ativa) e, se houver operador, o aviso de que ele está conectado. **Sair:** F10, ou segurar 1,2 s o canto superior
+direito da tela (serve em tela de toque). Nesse modo **Esc** só interrompe a resposta; nunca fecha o app.
+
+## Modo leve (Raspberry Pi 4)
+
+`iniciar.bat --leve` (liga sozinho em processador ARM ou com `NURIA_LEVE=1`): 30 quadros/s, sem brilho nem vidro desfocado,
+detecção em 320 px e OpenCV com 2 threads. Medido com o operador conectado (simulado, 2 núcleos): CPU de ~45 % para ~26 %,
+thread principal de 28 % para 10 %. `--fps N` continua valendo. A memória sobe ~100 MB ao conectar o operador (WebRTC) e
+estabiliza (sem vazamento em 80 s); o pacote de sinais (`scipy`, ~70 MB) só carrega quando a voz robótica é usada.
+
 ## Controle remoto (etapa 2)
 
 Um operador em outra sala abre a **sala do operador** no navegador (rede local, HTTPS + PIN), vê e ouve o robô e alterna
 entre **Autônomo**, **Assistido** e **Teleoperado**; pode falar pela Ayra (voz ao vivo ou frase digitada), disparar
 expressões e direcionar o olhar clicando no vídeo. **Voz robótica** opcional deixa a IA e o operador com a mesma voz.
-Ligue em **Ajustes → Controle remoto**. Detalhes: [`docs/CONTROLE_REMOTO.md`](docs/CONTROLE_REMOTO.md).
+Ligue em **Ajustes → Conexões**. Detalhes: [`docs/CONTROLE_REMOTO.md`](docs/CONTROLE_REMOTO.md).
 
 ## Corpo 3D e gestos
 
-**F3** (ou **Ajustes → Corpo 3D**) troca o rosto 2D pelo corpo 3D modelado no Blender, com os **mesmos olhos** no visor.
+**F3** (ou **Ajustes → Corpo e gestos**) troca o rosto 2D pelo corpo 3D modelado no Blender, com os **mesmos olhos** no visor.
 A cabeça acompanha o rosto rastreado e os braços fazem **13 gestos**: tchau, joia, dedo do meio, apontar, paz e amor, OK,
 aplaudir, encolher ombros, comemorar, continência, pensar, sim e não. A IA escolhe gestos sozinha (função `expressar`)
 e o operador tem um botão para cada um. Precisa de OpenGL 3.3 (qualquer placa de vídeo dos últimos ~10 anos); sem isso,
@@ -62,16 +76,42 @@ o app fica no 2D e explica o motivo. Para alterar o modelo: abra `blender/nuria_
   do meio** (fica brava). Com o corpo 3D ligado ela devolve o gesto com as mãos. Liga/desliga em **Reações → Responder gestos**
   e **Devolver dedo do meio**.
 
+## Conversa contínua e ligação com o operador
+
+- **Arraste “Clique para falar” para cima** (ou tecla **L**): o microfone trava, como no WhatsApp. Com a IA, a conversa fica
+  contínua: fale quando quiser, ela responde sem apertar nada e **para se você falar por cima**. Toque no botão de novo para encerrar.
+- **Teleoperado**: a pessoa e o operador falam ao mesmo tempo, como numa ligação. Na sala do operador, **deslize “Segure para
+  falar” para cima** (ou tecla **T**) para deixar o microfone aberto; a voz dele só sai pelo robô quando ele fala de fato.
+- Vídeo para o operador: **10 quadros/s** (5, 10 ou 15 em **Ajustes → Conexões → Vídeo**). A fila de áudio do robô para o operador guarda no máximo 60 ms, então o atraso não se acumula.
+
+## Conversas salvas, repetir e encerrar por voz
+- **Ícone de balão no dock** (entre Movimento e Ajustes) ou **Ajustes → Conversas** abre uma tela como WhatsApp/ChatGPT: à esquerda a busca (digite e a lista filtra por pergunta ou
+  resposta) e as conversas, da mais recente; à direita a conversa em balões (você à direita, o robô à esquerda). **Retomar**
+  (ou Enter) leva as últimas trocas como texto para uma sessão nova do provedor; **Apagar** pede um segundo toque; **Nova conversa**
+  começa do zero. Setas trocam de conversa, Esc limpa a busca e depois fecha. Só texto e tempos ficam em `logs/sessoes.jsonl`
+  (com `--sem-registro` nada é gravado, nem aparece aqui).
+- **Botão de repetir** (seta circular, ao lado do olho): toca de novo o áudio da última resposta, sem nova foto nem nova chamada à IA.
+- **“Nuria, encerrar conversa”** (também “terminar/finalizar a conversa/escuta/ligação”): cancela a resposta e solta o microfone
+  travado. Palavras soltas como “para” não valem, e no modo teleoperado o comando é ignorado.
+
+## Memória entre conversas
+O Nuria guarda **instruções vigentes** ("lembre-se de que a sala é a 12", "a partir de agora fale devagar") e **preferências**
+("meu nome é…") em `logs/memoria.db`, e as leva para a IA quando abre uma conversa nova, volta de uma queda ou o operador devolve o controle
+(com um resumo do que ele fez). O operador pode registrar instruções na sala dele. "Esqueça isso" revoga.
+Ligar/desligar e **Esquecer tudo** em Ajustes → Conversa e IA; `--sem-memoria` desliga.
+**Gestão**: aba **Memória** na tela Conversas (revogar/apagar) e o painel **`/memoria`** no navegador, com o PIN da sala, sem precisar de
+operador (editar, validar, buscar, métricas). Detalhes, limites e rollback em `docs/MEMORIA.md`.
+
 ## Gemini Live (alternativa à Realtime)
 
-**Ajustes → API → Provedor da conversa** alterna entre **OpenAI Realtime** e **Gemini Live** (Google) sem reiniciar. A chave
+**Ajustes → Conversa e IA → Provedor da conversa** alterna entre **OpenAI Realtime** e **Gemini Live** (Google) sem reiniciar. A chave
 do Gemini (Google AI Studio, começa com `AIza`) é colada na mesma aba e gravada no `.env` como `GEMINI_API_KEY`. O fluxo é o
 mesmo nos dois: fim de fala local, foto junto com a pergunta, fala em streaming, interrupção, expressões, gestos e operador.
 `iniciar.bat --ia simulada` ensaia o provedor escolhido sem rede.
 
 ## Economia de tokens
 
-Respostas de **1 frase (até ~15 palavras)**, teto por resposta (**Ajustes → API → Tamanho das respostas**: curtíssimas 220,
+Respostas de **1 frase (até ~15 palavras)**, teto por resposta (**Ajustes → Conversa e IA → Tamanho das respostas**: curtíssimas 220,
 curtas 350 [padrão, ~16 s de fala], normais 700 ou sem limite) e foto de **512 px** por pergunta (`NURIA_IMAGEM_LADO`).
 A foto sai da sessão depois da resposta (Realtime). Silêncio ou cancelamento não enviam nada.
 
@@ -83,7 +123,7 @@ vídeo, áudio, codec) ficam em `logs/falhas.log`, e o `iniciar.bat` segura a ja
 ## Painel de LEDs (Arduino)
 
 Olhos espelhados num painel físico 32×8 (Arduino Uno + 4× MAX7219). Ligações: **VCC→5V, GND→GND, DIN→D11, CS→D10, CLK→D13**.
-Grave o firmware com `gravar_arduino.bat` (ou pela IDE do Arduino) e ligue em **Ajustes → Arduino**.
+Grave o firmware com `gravar_arduino.bat` (ou pela IDE do Arduino) e ligue em **Ajustes → Conexões → Painel LED**.
 Passo a passo, calibração e alimentação: [`docs/ARDUINO.md`](docs/ARDUINO.md).
 
 ## Como o tempo real funciona
@@ -101,7 +141,8 @@ Fim da resposta ─► conversation.item.delete da foto (cada imagem é cobrada 
 Interromper ─► response.cancel + descarta áudio pendente + conversation.item.truncate (só o trecho ouvido fica no histórico)
 ```
 
-- **Eco:** o microfone só fica aberto enquanto ela **não** fala (e espera 0,2 s após uma interrupção), então ela não ouve a própria voz.
+- **Eco:** um microfone só, com **cancelamento de eco** (o som que o alto-falante tocou é tirado do microfone). Por isso dá para
+  falar por cima da Ayra e conversar com o operador ao mesmo tempo. Com fone de ouvido ou sem cancelamento: **Ajustes → Conversa e IA → Eco do alto-falante**.
 - **Fim da fala local** (`turn_detection: null`): os botões Ouvir/Enviar/Cancelar continuam valendo e a imagem entra antes da resposta.
 - **Queda de conexão:** em repouso, reconecta na próxima pergunta (até 3 tentativas) e leva as últimas trocas como contexto. No meio de uma resposta, mostra o erro e segue.
 - **Configuração:** mudanças seguras no `.env` viram `session.update`; trocar modelo, voz ou chave recria a sessão.
@@ -123,7 +164,7 @@ Detalhes: [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) · Testes: [`docs/REGISTR
 
 ## Chave e modelo pela interface
 
-**Ajustes (F10) → API**: provedor (OpenAI Realtime ou Gemini Live), colar as chaves (Ctrl+V; na tela só aparecem os 4 últimos
+**Ajustes (F10) → Conversa e IA**: provedor (OpenAI Realtime ou Gemini Live), colar as chaves (Ctrl+V; na tela só aparecem os 4 últimos
 caracteres), **Testar conexão**, trocar **Modelo** e **Voz** do provedor escolhido, **Tamanho das respostas** ou **Remover chave**. Tudo é gravado no `.env`
 (fora do Git) e a sessão Realtime se refaz sozinha, sem reiniciar. Uma variável `OPENAI_API_KEY` do Windows tem prioridade sobre o `.env` (a aba avisa).
 
@@ -189,5 +230,29 @@ python test_arduino.py     # 38 verificações do painel LED (porta serial simul
 python test_corpo3d.py     # 44 verificações do corpo 3D: modelo, gestos, OpenGL, IA, operador e menu
 python test_maos_e_tela.py # 39 verificações: nome, câmera ao vivo, operador no celular e gestos vistos
 python test_gemini.py      # 41 verificações: Gemini Live (simulado), economia de tokens e estabilidade
+python test_uso.py         # 51 verificações: grau da voz, Modo de uso, menu agrupado e rolagem, fila de áudio, voz sem travar, modo leve
+python test_audio.py       # 37 verificações: eco, microfone único, conversa contínua, ligação e 10 quadros/s
 python selftest.py --no-png # 255 verificações do rosto/percepção
 ```
+
+## Voz robótica com grau e áudio da ligação
+
+- **Grau 0–100 %** (como nos filtros de voz do Animaze): mistura a voz natural com a robótica, alinhadas no tempo (sem eco).
+  Ajustes → Conversa e IA → Voz robótica (toque cicla 0/25/50/75/100) ou o controle deslizante da sala do operador. Salvo em
+  `NURIA_VOZ_ROBOTICA` (valores antigos `sim`/`1` = 60 %). Comece em 40–60 % se a voz estiver difícil de entender.
+- **Sem picotar**: buffer de jitter adaptativo no alto-falante (120 ms, cresce até 400 ms se faltar áudio), blocos de 40 ms,
+  processamento de eco/captura e vocoder fora das threads de áudio e do laço de rede, troca de thread a cada 1 ms.
+- Nada na tela revela o teleoperador: sem aviso, sem “(voz do operador)” na pergunta.
+
+## Desempenho do corpo 3D e log de tempos
+
+O corpo 3D ajusta a qualidade sozinho (suavização de borda e resolução interna, 4 degraus) conforme o tempo real de desenho:
+placa fraca ou Raspberry desce de degrau; com folga estável, sobe. O rosto do visor só é redesenhado quando o 3D redesenha.
+`logs/desempenho.log` ganha uma linha a cada 10 s (fps, tempo por quadro, tempo e degrau do 3D, operador conectado). Se estiver
+lento, envie esse arquivo: mostra onde está o gargalo no seu computador.
+
+### Visão sem travar a interface (queda de fps após minutos)
+Num log real o fps caía de 43 para ~6 em poucos minutos, sem operador, com a CPU saturada. A visão disputava CPU com a
+interface: a detecção de rosto rodava na taxa da câmera e as threads de mãos, sorriso e objetos trabalhavam a 8, 6,7 e 2 Hz.
+Agora o rosto é detectado no máximo 15×/s (10×/s no modo leve), mãos 5,5 Hz, sorriso 3 Hz e objetos 1,7 Hz, e todas essas
+threads rodam com prioridade abaixo do normal no Windows. Se a CPU ficar curta, a visão atrasa um pouco e a interface continua fluida.

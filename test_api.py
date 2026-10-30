@@ -105,7 +105,7 @@ def test_menu_and_connection():
     roots = m.items(hud, theme.SCHEMES["dark"])
     check("aba API no menu, com o provedor em uso", any(a == "api" and "OpenAI Realtime" in st for a, _, st, _ in roots))
     m.activate("api")
-    names = [a for a, *_ in m.items(hud, theme.SCHEMES["dark"])]
+    names = [a for a, *_ in m.items(hud, theme.SCHEMES["dark"]) if a.startswith("api:")]
     check("itens: provedor, chaves (OpenAI e Gemini), testar, remover, modelo, voz, tamanho, voz robótica",
           names == ["api:provider", "api:key", "api:gkey", "api:test", "api:remove", "api:model", "api:voice",
                     "api:tokens", "api:robot"])

@@ -478,6 +478,58 @@ Estabilidade (app não fecha com o operador falando)
 
 ```
 
+### 1.9 Áudio duplex, conversa contínua e ligação — `test_audio.py`
+
+Sinais sintéticos (fala, eco com atraso e reverberação). Validar com microfone e alto-falante reais (seção 2.7).
+
+```
+Cancelamento de eco (sala simulada)
+  [OK] atraso de 40 ms: eco do robô cai 33 dB (a IA/operador não ouvem o robô)
+  [OK] atraso de 40 ms: falando junto, a voz da pessoa passa inteira (correlação 1.00, perda 0.1 dB)
+  [OK] atraso de 250 ms: eco do robô cai 32 dB (a IA/operador não ouvem o robô)
+  [OK] atraso de 250 ms: falando junto, a voz da pessoa passa inteira (correlação 1.00, perda 0.1 dB)
+  [OK] o eco da sala mudou: reaprende em segundos (23 dB depois)
+  [OK] leve: 0.14 ms por bloco de 16 ms
+Reamostragem contínua (sem estalos entre blocos)
+  [OK] 48 kHz → 16 kHz em blocos de tamanhos variados: 16001 amostras (≈16000)
+  [OK] sem descontinuidade nas emendas
+  [OK] 16 kHz → 48 kHz para o operador (Opus)
+Microfone único repartido (IA + operador)
+  [OK] microfone fechado enquanto ninguém escuta (privacidade)
+  [OK] abre um microfone só para os dois assinantes
+  [OK] IA recebe 24 kHz e operador 48 kHz (8.0 s e 8.0 s de áudio)
+  [OK] eco do alto-falante removido no caminho real (captura 48 kHz + referência 24 kHz): 35 dB
+  [OK] ninguém escutando: o microfone fecha sozinho
+  [OK] meia-via: microfone mudo enquanto o robô fala
+  [OK] fone de ouvido: passa direto (sem eco para cancelar)
+  [OK] operador recebe blocos de 20 ms a 48 kHz
+Conversa contínua: escuta à espera da fala
+  [OK] espera a pessoa falar (sem prazo) e devolve a fala
+  [OK] envia só a fala + 0,4 s antes (sem cortar a 1ª sílaba): 1.71 s
+Conversa contínua na IA (OpenAI simulada) e barge-in por voz
+  [OK] travar o microfone: conversa contínua ligada
+  [OK] fala → resposta sem apertar nada
+  [OK] barge-in: falar por cima interrompe a IA na hora
+  [OK] e a nova pergunta segue (commit + resposta)
+  [OK] tocar no botão (ou Espaço) com o microfone travado encerra a conversa contínua
+  [OK] teleoperado: a IA não escuta (o microfone fica para a ligação com o operador)
+Voz do operador: detecção de fala (microfone travado não trava a Ayra)
+  [OK] silêncio do operador (travado) não ocupa o alto-falante nem muda o estado
+  [OK] voz do operador interrompe a IA e sai pelo robô (com pré-roll)
+  [OK] pausa do operador: devolve a palavra (Pronta)
+Interface: arrastar para travar, ajustes e sala do operador
+  [OK] arrastar o botão de falar para cima trava o microfone (sem disparar um clique)
+  [OK] clique simples continua sendo 'falar uma vez'
+  [OK] tecla L trava/destrava
+  [OK] Ajustes → Áudio e conversa: conversa contínua e modo do eco
+  [OK] Ajustes → Controle remoto → Vídeo: 12 quadros/s (5, 12, 15)
+  [OK] servidor: 12 quadros/s por padrão; 5 e 15 disponíveis
+  [OK] sala do operador: deslizar para cima trava o 'Falar' (como no WhatsApp); T no teclado
+  [OK] sala do operador mostra FPS e o modo de áudio
+  [OK] microfone do robô para o operador sai do mesmo microfone, sem eco (HubMic)
+
+```
+
 ## 2. Validação real no computador da apresentação (preencher)
 
 Primeiro: `verificar_nuria.bat` (conecta de verdade na Realtime e mede o 1º áudio). Cada pergunta fica em `logs/sessoes.jsonl`
@@ -524,7 +576,7 @@ com `primeiro_audio` e `resposta_completa` (segundos, a partir do fim da fala).
 
 | # | Como testar | Esperado | Obtido | Resultado |
 |---|---|---|---|---|
-| G1 | **F3** (ou Ajustes → Corpo 3D) | Corpo 3D com os olhos atuais no visor; fluido (≥ 25 quadros/s) | | ☐ OK |
+| G1 | **F3** (ou Ajustes → Corpo e gestos) | Corpo 3D com os olhos atuais no visor; fluido (≥ 25 quadros/s) | | ☐ OK |
 | G2 | Andar na frente da câmera | A cabeça gira acompanhando o rosto | | ☐ OK |
 | G3 | Perguntar “dá tchau pra turma” | A IA fala e acena com a mão | | ☐ OK |
 | G4 | Sala do operador → botões de gesto (joia, dedo do meio…) | Gesto aparece no robô; estado “Gesto” na sala | | ☐ OK |
@@ -546,8 +598,66 @@ com `primeiro_audio` e `resposta_completa` (segundos, a partir do fim da fala).
 
 | # | Como testar | Esperado | Obtido | Resultado |
 |---|---|---|---|---|
-| GL1 | Ajustes → API → colar a chave do Gemini → Provedor: Gemini Live → Testar conexão | “OK · conectou em … · gemini-3.8-live” | | ☐ OK |
+| GL1 | Ajustes → Conversa e IA → colar a chave do Gemini → Provedor: Gemini Live → Testar conexão | “OK · conectou em … · gemini-3.8-live” | | ☐ OK |
 | GL2 | Perguntar por voz e por texto com a câmera | Resposta curta (1 frase), com foto; coluna mostra “Gemini Live” | | ☐ OK |
 | GL3 | Pedir “dá tchau” / “chora” | Gesto/expressão aparecem | | ☐ OK |
 | GL4 | Interromper (Espaço) no meio da fala | Para na hora e volta a ouvir | | ☐ OK |
 | E1 | Operador conectado, corpo 3D ligado, “Segure para falar” por 5 min | App não fecha | | ☐ OK |
+
+### 2.7 Conversa contínua e ligação
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| A1 | Arrastar “Clique para falar” para cima e conversar | Responde sem apertar nada; fala por cima interrompe | | ☐ OK |
+| A2 | Alto-falante alto, sem falar | Ela não se interrompe sozinha (eco cancelado) | | ☐ OK |
+| A3 | Teleoperado + operador com microfone travado (T) | Os dois falam ao mesmo tempo; operador não ouve o próprio eco | | ☐ OK |
+| A4 | Se houver eco: Ajustes → Conversa e IA → Eco do alto-falante → Meia-via | Volta ao comportamento antigo, sem eco | | ☐ OK |
+| A5 | Vídeo do operador a 10 quadros/s | Fluido; se a rede travar, use 5 | | ☐ OK |
+
+### 2.8 Modo de uso, menu, áudio sem atraso e modo leve
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| U1 | Ajustes → Modo de uso | Some tudo, menos rosto, botão de falar, conversa e o ponto de câmera | | ☐ OK |
+| U2 | No Modo de uso: F10; ou segurar 1,2 s o canto superior direito | Volta aos Ajustes; o anel mostra o progresso | | ☐ OK |
+| U3 | No Modo de uso: Esc, D, F1 | Nada fecha nem abre | | ☐ OK |
+| U4 | Ajustes → Conexões (lista longa): roda, arrastar, barra, PgDn | Rola suave, sem pular de volta ao início | | ☐ OK |
+| U5 | Operador fala pelo celular com o robô conectado | Voz contínua e compreensível (sem “travar”) | | ☐ OK |
+| U6 | Bater palmas perto do robô com o operador ouvindo | Atraso bem menor que antes (~0,8 s); medir com um cronômetro | | ☐ OK |
+| U7 | `iniciar.bat --leve` no Raspberry Pi 4 | Fluido a 30 quadros/s com o operador conectado | | ☐ OK |
+
+Automático (`python test_uso.py`, 42/42): fila de áudio limitada a 60 ms mesmo com deriva de relógio; reamostragem contínua sem
+degraus; buffer de jitter e reagrupamento; voz ao vivo mais inteligível; menu agrupado e rolagem (roda, arrastar, barra, PgDn);
+Modo de uso no laço do aplicativo (entrada, saída por F10 e toque longo, teclas bloqueadas); flags do modo leve.
+
+### 2.9 Voz com grau e ligação
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| U8 | Sala do operador: arrastar “Voz robótica” de 0 a 100 % falando | Muda na hora; 0 % é a voz natural; 40–60 % é compreensível | | ☐ OK |
+| U9 | Ligação longa (5 min) com corpo 3D ligado, operador falando | Áudio contínuo, sem picotar | | ☐ OK |
+| U10 | Modo teleoperado: olhar a tela do robô | Nenhuma mensagem de “teleoperado” nem “(voz do operador)” | | ☐ OK |
+| U11 | Rodar 5 min com corpo 3D, sem operador; ler `logs/desempenho.log` | fps estável (sem cair para ~6); `cpu=` bem abaixo de 300 % | | ☐ OK |
+
+### 2.10 Conversas salvas, repetir e encerrar por voz
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| U12 | Fazer 2 perguntas, abrir Ajustes → Conversas | A conversa aparece na lista (“2 trocas”) e em balões à direita; a busca filtra | | ☐ OK |
+| U13 | Fechar e abrir o app, retomar a conversa e perguntar “do que falávamos?” | A IA lembra o assunto | | ☐ OK |
+| U14 | Tocar na seta de repetir após uma resposta | Repete a mesma fala, sem demora de IA | | ☐ OK |
+| U15 | Com o microfone travado, dizer “Nuria, encerrar conversa” | Responde nada, solta o microfone | | ☐ OK |
+
+### 2.11 Memória
+
+| # | Como testar | Esperado | Obtido | Resultado |
+|---|---|---|---|---|
+| M1 | Dizer “lembre-se de que a sala do evento é a 12”, mudar de assunto, abrir Conversas → Nova conversa e perguntar “qual é a sala?” | A IA responde 12 | | ☐ OK |
+| M2 | Fechar e abrir o app e repetir a pergunta | Ainda responde 12 | | ☐ OK |
+| M3 | Dizer “esqueça isso” e perguntar de novo | Não sabe mais | | ☐ OK |
+| M4 | Operador registra instrução na sala, devolve ao modo autônomo e pergunta algo relacionado | A IA segue a instrução sem contradizer | | ☐ OK |
+| M5 | Ajustes → Memória desligada, repetir M1 | Não lembra; `logs/memoria.db` não cresce | | ☐ OK |
+| M6 | Comparar o tempo até a primeira fala com a memória ligada e desligada (log de desempenho) | Diferença imperceptível (< 50 ms) | | ☐ OK |
+| M7 | Ligar a sala, abrir `https://localhost:8765/memoria` no PC (aceitar o certificado) e entrar com o PIN, sem operador | Lista instruções e preferências; Revogar some da lista e a IA deixa de seguir | | ☐ OK |
+| M8 | Abrir o painel no celular com o robô rodando por 5 min (3D ligado) e comparar `desempenho.log` com/sem a página aberta | fps igual | | ☐ OK |
+| M9 | Conversas → Tab → aba Memória → Revogar | Some na hora; aviso "Memória atualizada" | | ☐ OK |

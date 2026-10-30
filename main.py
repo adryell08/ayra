@@ -10,6 +10,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "2")      # bibliotecas numéricas não abrem uma thread por núcleo em cada chamada
 import threading
 import time
 from pathlib import Path
@@ -20,7 +23,9 @@ import pygame
 
 import theme
 from expressions import KEY_ORDER, LABELS
-from diagnostics import FrameMetrics, TimedDetector
+import historico
+from conversas_ui import ChatHistory
+from diagnostics import FrameMetrics, TimedDetector, thread_cpu, thread_name
 from renderer import HudInfo, Renderer
 from robot import Robot
 from tracker import CameraSource, SimulatedSource, make_detector
@@ -48,7 +53,12 @@ def parse_args(argv=None):
     ap.add_argument("--det-width", type=int, default=416, help="largura usada na detecção (menor = mais rápido)")
     ap.add_argument("--model", default=None, help="caminho do modelo YuNet (.onnx)")
     ap.add_argument("--sleep-after", type=float, default=None, help="segundos sem ninguém até dormir")
-    ap.add_argument("--fps", type=int, default=60)
+    ap.add_argument("--fps", type=int, default=None, help="limite de quadros/s (padrão 60; 30 no modo leve)")
+    ap.add_argument("--uso", action="store_true",
+                    help="abre direto no Modo de uso: só a interação com o robô, sem ajustes nem painéis (F10 sai)")
+    ap.add_argument("--leve", action="store_true", default=None,
+                    help="modo leve (Raspberry Pi): 30 fps, sem brilho nem vidro desfocado, detecção menor. "
+                         "Liga sozinho em processadores ARM ou com NURIA_LEVE=1")
     ap.add_argument("--debug", action="store_true", help="mostrar diagnóstico numérico (tecla D alterna)")
     from preferences import DEFAULT_FEATURES, LABELS as FEATURE_LABELS
     for name in DEFAULT_FEATURES:
@@ -60,9 +70,18 @@ def parse_args(argv=None):
                          "legado = 3 chamadas separadas (transcrição, visão, voz)")
     ap.add_argument("--sem-ia", action="store_true", help="esconder a coluna da Ayra (só o rosto)")
     ap.add_argument("--imagem", default=None, help="foto usada quando não há câmera (ensaio/demonstração)")
+    ap.add_argument("--sem-memoria", action="store_true", help="não guardar instruções e preferências entre conversas (logs/memoria.db)")
     ap.add_argument("--sem-registro", action="store_true", help="não gravar logs/sessoes.jsonl (só texto e tempos)")
     ap.add_argument("--run-seconds", type=float, default=0, help=argparse.SUPPRESS)   # só para testes
     parsed = ap.parse_args(argv)
+    if parsed.leve is None:
+        import platform
+        parsed.leve = (os.environ.get("NURIA_LEVE", "").strip() in ("1", "true", "sim")
+                       or platform.machine().lower().startswith(("arm", "aarch")))
+    if parsed.fps is None:
+        parsed.fps = 30 if parsed.leve else 60
+    if parsed.leve and parsed.det_width == 416:
+        parsed.det_width = 320
     parsed.feature_overrides = {key: getattr(parsed, key) for key in DEFAULT_FEATURES if hasattr(parsed, key)}
     for key, default in DEFAULT_FEATURES.items():
         if not hasattr(parsed, key):
@@ -119,12 +138,20 @@ def talk_level(assistant, state: str) -> float:
 
 def main(argv=None) -> int:
     install_crash_logs()
+    sys.setswitchinterval(0.001)       # threads de áudio e rede ganham o GIL em 1 ms (padrão: 5 ms) → sem picotes
     args = parse_args(argv)
     import preferences
     features = preferences.load()
     features.update(args.feature_overrides)
     for key, value in features.items():
         setattr(args, key, value)
+    if args.leve:
+        CameraSource.DETECT_HZ = 10.0           # Raspberry: 10 detecções de rosto por segundo
+    try:
+        import cv2
+        cv2.setNumThreads(2)                   # várias threads de visão x N núcleos cada = CPU saturada
+    except Exception:
+        pass
     set_dpi_aware()
     pygame.init()
     pygame.display.set_caption("Ayra")
@@ -149,7 +176,8 @@ def main(argv=None) -> int:
     robot = Robot((gw, gh), reduce_motion=reduce_motion, cfg=cfg, sensitivity=args.sens)
     for key, value in features.items():
         robot.set_feature(key, value)
-    renderer = Renderer(screen, (gw, gh), scheme, glow=not args.no_glow)
+    renderer = Renderer(screen, (gw, gh), scheme, glow=not (args.no_glow or args.leve))
+    renderer.light = bool(args.leve)
     from assistente import Assistant
     from painel_assistente import AssistantPanel
     import credenciais
@@ -225,6 +253,7 @@ def main(argv=None) -> int:
     # ---- aba API: chave, teste, modelo e voz (grava no .env; a sessão Realtime se refaz sozinha) ----
     from entrada_chave import KeyEntry
     key_entry = KeyEntry()
+    chat = ChatHistory()
     api_ui = dict(test="Tocar para testar o provedor escolhido", confirm_remove=False)
 
     def tokens_label(n):
@@ -241,7 +270,7 @@ def main(argv=None) -> int:
                        voice=cfg.gemini_voice if gemini else cfg.realtime_voice, test=api_ui["test"],
                        tokens=tokens_label(cfg.max_tokens), confirm_remove=api_ui["confirm_remove"],
                        source=credenciais.key_source(name="GEMINI_API_KEY" if key_entry.kind == "gemini" else "OPENAI_API_KEY"),
-                       robot_voice=cfg.robot_voice)
+                       robot_voice=cfg.robot_voice, robot_level=cfg.robot_level)
 
     def api_reconnect():
         if hasattr(assistant, "warmup") and args.ia == "realtime" and credenciais.load().live_configured:
@@ -296,7 +325,8 @@ def main(argv=None) -> int:
                 credenciais.set_env_values({"NURIA_MAX_TOKENS": str(cycle(values, cfg.max_tokens))})
                 api_reconnect()
             elif name == "robot":
-                set_robot_voice(not cfg.robot_voice)
+                steps = (0, 25, 50, 75, 100)                       # toque cicla; a sala do operador tem controle fino
+                set_robot_voice(steps[(min(range(5), key=lambda i: abs(steps[i] - cfg.robot_level)) + 1) % 5])
             elif name == "remove":
                 if api_ui["confirm_remove"]:
                     credenciais.set_env_values({"GEMINI_API_KEY" if gemini else "OPENAI_API_KEY": None})
@@ -308,11 +338,18 @@ def main(argv=None) -> int:
             toast(f"Não foi possível gravar o .env: {error}")
         api_state()
 
-    def set_robot_voice(on):
-        credenciais.set_env_values({"NURIA_VOZ_ROBOTICA": "1" if on else "0"})
-        if hasattr(assistant, "robot_voice"):
-            assistant.robot_voice = bool(on)
-        toast("Voz robótica " + ("ligada" if on else "desligada"))
+    def set_robot_voice(percent, save=True):
+        """Grau da voz robótica, 0–100 %. Vale na hora para a IA e para o operador."""
+        percent = max(0, min(100, int(percent)))
+        if save:
+            try:
+                credenciais.set_env_values({"NURIA_VOZ_ROBOTICA": str(percent)})
+            except OSError as error:
+                toast(f"Não foi possível gravar o .env: {error}")
+        if hasattr(assistant, "robot_level"):
+            assistant.robot_level = percent / 100.0
+        if save:
+            toast("Voz robótica: " + (f"{percent} %" if percent else "desligada"))
 
     def api_save_key(key, kind="openai"):
         try:
@@ -329,20 +366,50 @@ def main(argv=None) -> int:
 
     api_state()
 
-    # ---- controle remoto (etapa 2): sala do operador no navegador, por WebRTC ----
+    # ---- áudio full-duplex: 1 microfone, eco do alto-falante cancelado, repartido entre IA e operador ----
     import json as _json
+    import audio_duplex
+    audio_cfg_path = Path(__file__).resolve().parent / "audio.local.json"
+    try:
+        audio_cfg = _json.loads(audio_cfg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        audio_cfg = {}
+    hub = audio_duplex.AudioHub(str(audio_cfg.get("eco", "eco")))
+
+    import memoria
+    mem_on = bool(audio_cfg.get("memoria", os.environ.get("NURIA_MEMORIA", "on").strip().lower() not in ("off", "0", "nao", "não")))
+    mem_on = mem_on and not args.sem_registro and not args.sem_memoria
+    memory = memoria.Memory(enabled=mem_on, retention_days=int(os.environ.get("NURIA_MEMORIA_DIAS", "90") or 90))
+    forget_armed = {"t": 0.0}
+
+    def audio_save():
+        try:
+            audio_cfg_path.write_text(_json.dumps({"eco": hub.mode, "memoria": memory.enabled}) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def audio_state():
+        hud.audio = dict(mode=hub.mode, label=audio_duplex.MODE_LABELS[hub.mode],
+                         continuous=bool(getattr(state_ref.get("assistant"), "continuous", False)),
+                         memory=memory.active, memory_blocked=bool(args.sem_registro or args.sem_memoria),
+                         memory_n=len(memory.list_active_instructions()) if memory.active else 0)
+    state_ref = {}
+
+    # ---- controle remoto (etapa 2): sala do operador no navegador, por WebRTC ----
     remote_cfg_path = Path(__file__).resolve().parent / "remote.local.json"
     try:
         remote_cfg = _json.loads(remote_cfg_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         remote_cfg = {}
     remote = dict(server=None, enabled=bool(remote_cfg.get("enabled", False)), port=int(remote_cfg.get("port", 8765)),
+                  fps=int(remote_cfg.get("fps", 10)) if int(remote_cfg.get("fps", 10)) in (5, 10, 15) else 10,
                   pin=str(remote_cfg.get("pin", "")), badge=bool(remote_cfg.get("badge", True)), faces=0)
 
     def remote_save():
         try:
             remote_cfg_path.write_text(_json.dumps(dict(enabled=remote["enabled"], port=remote["port"], pin=remote["pin"],
-                                                        badge=remote["badge"]), indent=2) + "\n", encoding="utf-8")
+                                                        badge=remote["badge"], fps=remote["fps"]), indent=2) + "\n",
+                                       encoding="utf-8")
         except OSError:
             pass
 
@@ -359,16 +426,20 @@ def main(argv=None) -> int:
         return dict(estado=s.state, modo=getattr(s, "mode", "autonomo"), pergunta=s.question, resposta=s.answer,
                     mensagem=s.message if s.message_kind in ("warning", "error") else "", expressao=LABELS.get(
                         robot.expr.shown_name(), robot.expr.shown_name()), visao=s.vision,
-                    voz_robotica=bool(getattr(assistant, "robot_voice", False)), rostos=remote["faces"],
-                    corpo3d=body["on"], gesto=GESTURES.get(body["gesture"], "") if time.perf_counter() - t0 < body["until"] else "")
+                    voz_robotica=bool(getattr(assistant, "robot_voice", False)),
+                    voz_robotica_nivel=int(round(100 * getattr(assistant, "robot_level", 0.0))), rostos=remote["faces"],
+                    corpo3d=body["on"], gesto=GESTURES.get(body["gesture"], "") if time.perf_counter() - t0 < body["until"] else "",
+                    fps=remote["fps"], eco=hub.mode, continua=bool(getattr(assistant, "continuous", False)))
 
     def remote_start():
-        from operador import OperatorServer, new_pin
+        from operador import HubMic, OperatorServer, new_pin
         remote["pin"] = remote["pin"] if (len(remote["pin"]) == 6 and remote["pin"].isdigit()) else new_pin()
         server = OperatorServer(remote_frame, remote_telemetry,
                                 lambda pcm: assistant.operator_audio(pcm) if hasattr(assistant, "operator_audio") else None,
                                 robot_muted=lambda: assistant.player.pending() > 0 if hasattr(assistant.player, "pending") else False,
-                                port=remote["port"], pin=remote["pin"])
+                                port=remote["port"], pin=remote["pin"], fps=remote["fps"],
+                                mic_factory=lambda: HubMic(hub))
+        server.memory = memory                    # painel /memoria (mesmo PIN)
         if server.start():
             remote["server"] = server
         else:
@@ -389,17 +460,25 @@ def main(argv=None) -> int:
         hud.remote = dict(enabled=remote["enabled"] and server is not None,
                           status=server.status if server else "desligada", url=server.url if server else "",
                           pin=server.pin if server else "", operator=server.operator if server else "",
-                          badge=remote["badge"])
+                          badge=remote["badge"], fps=remote["fps"])
 
     def remote_action(name):
         if name == "enabled":
             remote["enabled"] = not remote["enabled"]
             remote_start() if remote["enabled"] else (remote_stop(), remote_save())
+        elif name == "memory":
+            toast(("Abra no navegador: " + remote["server"].url + "/memoria (PIN " + remote["server"].pin + ")")
+                  if remote["server"] else "Ligue a sala do operador primeiro")
         elif name == "pin" and remote["server"]:
             remote["pin"] = remote["server"].regenerate_pin()
             remote_save()
         elif name == "kick" and remote["server"]:
             remote["server"].disconnect_operator()
+        elif name == "fps":
+            remote["fps"] = {5: 10, 10: 15, 15: 5}.get(remote["fps"], 10)
+            if remote["server"]:
+                remote["server"].fps = remote["fps"]           # vale na hora, sem reconectar
+            remote_save()
         elif name == "badge":
             remote["badge"] = not remote["badge"]
             remote_save()
@@ -413,6 +492,12 @@ def main(argv=None) -> int:
             toast(f"Operador conectado: {data}" if data else "Operador desconectado")
         elif kind == "mode" and hasattr(assistant, "set_mode"):
             assistant.set_mode(str(data.get("modo", "")))
+        elif kind == "memory_note" and hasattr(assistant, "memory_note"):
+            assistant.memory_note(str(data.get("texto", "")))
+            audio_state()
+        elif kind == "instruction" and hasattr(assistant, "operator_instruction"):
+            assistant.operator_instruction(str(data.get("texto", "")))
+            toast("Instrução do operador registrada")
         elif kind == "say" and hasattr(assistant, "operator_say"):
             assistant.operator_say(str(data.get("texto", "")))
         elif kind == "interrupt":
@@ -424,8 +509,15 @@ def main(argv=None) -> int:
         elif kind == "vision":
             assistant.set_vision(bool(data.get("ligado")))
         elif kind == "robot_voice":
-            set_robot_voice(bool(data.get("ligado")))
-            api_state()
+            if "nivel" in data:
+                try:
+                    set_robot_voice(float(data["nivel"]), save=bool(data.get("final", True)))
+                except (TypeError, ValueError):
+                    pass
+            else:
+                set_robot_voice(60 if data.get("ligado") else 0)
+            if data.get("final", True):
+                api_state()
         elif kind == "look":
             try:
                 gx, gy = float(data.get("gx", 0)), float(data.get("gy", 0))
@@ -506,6 +598,7 @@ def main(argv=None) -> int:
         assistant = Assistant(still, backend_factory, log=not args.sem_registro)
     else:
         from assistente_realtime import RealtimeAssistant
+        from voz import MicStream
         if args.ia == "simulada":
             import realtime
             import gemini_live
@@ -516,15 +609,19 @@ def main(argv=None) -> int:
                                                      cfg.gemini_voice, cfg.max_tokens)
                 return realtime.FakeRealtimeServer()
             sim_provider = credenciais.load().provider
-            assistant = RealtimeAssistant(still, transport_factory=fake_transport,
+            assistant = RealtimeAssistant(still, transport_factory=fake_transport, mic=MicStream(hub=hub),
                                           config_loader=lambda: credenciais.load(environ={
                                               "OPENAI_API_KEY": "simulada", "GEMINI_API_KEY": "simulada"}),
                                           log=not args.sem_registro,
                                           label=("Gemini Live" if sim_provider == "gemini" else "Realtime") + " simulado · sem rede")
         else:
-            assistant = RealtimeAssistant(still, log=not args.sem_registro)
+            assistant = RealtimeAssistant(still, log=not args.sem_registro, mic=MicStream(hub=hub))
+        assistant.player.on_played = hub.submit_reference   # o que o alto-falante tocou = referência do eco
         if args.ia == "simulada" or credenciais.load().live_configured:
             assistant.warmup()                  # conecta já; a 1ª pergunta não espera o aperto de mão
+    assistant.memory = memory                     # no-op se desligada, sem registro ou se o banco falhar
+    state_ref["assistant"] = assistant
+    audio_state()
     assistant_state = "idle"
 
     def ai_label():
@@ -570,12 +667,40 @@ def main(argv=None) -> int:
     def body_state():
         hud.body = dict(enabled=body["on"], error=body["error"])
 
+    perf = {"t": 0.0, "ms": [], "laps": {}, "mark": time.perf_counter(), "cpu": sum(os.times()[:2]), "thr": {}}
+
+    def lap(name):
+        """Cronometra uma etapa do quadro (alimenta logs/desempenho.log)."""
+        t_now = time.perf_counter()
+        perf["laps"][name] = perf["laps"].get(name, 0.0) + (t_now - perf["mark"]) * 1000
+        perf["mark"] = t_now
+    use = {"on": False, "corner": None}
+
+    def set_use(on: bool) -> None:
+        """Modo de uso: esconde ajustes, diagnóstico e painéis; fica só o robô, o botão de falar e a conversa."""
+        use["on"], use["corner"] = on, None
+        hud.use_mode, hud.use_exit, hud.hint_age = on, 0.0, 0.0
+        panel.simple = on
+        panel.visible = True
+        if on:
+            panel.typing = False
+            hud.debug = hud.show_help = False
+            renderer.menu.open = False
+
     def set_body(on: bool, save: bool = True):
         if on and body["obj"] is None:
             ok, why = corpo3d.available()
             if ok:
                 try:
                     body["obj"] = corpo3d.Body3D()
+                    body["obj"].adaptive = bool(args.leve)       # qualidade máxima por padrão; só o modo leve (Raspberry) reduz sozinho
+                    try:
+                        LOG_DIR.mkdir(exist_ok=True)
+                        with open(LOG_DIR / "desempenho.log", "a", encoding="utf-8") as fh:
+                            info = body["obj"].ctx.info
+                            fh.write(f"# GPU do 3D: {info.get('GL_RENDERER', '?')} · {info.get('GL_VENDOR', '?')} · OpenGL {info.get('GL_VERSION', '?')[:20]}\n")
+                    except Exception:
+                        pass
                 except Exception as error:                  # sem OpenGL 3.3 / driver antigo
                     ok, why = False, f"OpenGL indisponível ({str(error).splitlines()[0][:60]})"
             if not ok:
@@ -606,9 +731,12 @@ def main(argv=None) -> int:
         if body["face"] is None:
             body["face"] = Renderer(pygame.Surface((640, 360)), (gw, gh), theme.SCHEMES["dark"], glow=True)
         fr = body["face"]
-        fr.draw_panel(frame, dt, reduce_motion)
-        if body["img"] is None or body["img"].get_size() != area.size or now - body["last"] >= 1 / 30:
+        obj = body["obj"]
+        period = (1 / 20 if args.leve else 1 / 30) * (1.25 if obj.q >= 2 else 1.0)    # 3D mais leve = menos quadros
+        if body["img"] is None or body["img"].get_size() != area.size or now - body["last"] >= period:
             body["last"] = now
+            fr.glow_on = obj.q == 0 and not args.leve        # o rosto do visor só é desenhado quando o 3D redesenha
+            fr.draw_panel(frame, dt, reduce_motion)
             k = min(1.0, 1280 / area.w)                     # placa de vídeo fraca: desenha menor e amplia
             size = (max(16, int(area.w * k)), max(16, int(area.h * k)))
             talk = talk_level(assistant, assistant_state)
@@ -621,7 +749,7 @@ def main(argv=None) -> int:
                 set_body(False)
                 renderer.draw_panel(frame, dt, reduce_motion)
                 return
-            body["img"] = img if size == area.size else pygame.transform.smoothscale(img, area.size)
+            body["img"] = img if img.get_size() == area.size else pygame.transform.smoothscale(img, area.size)
         screen.fill(renderer.scheme.bg)
         screen.blit(body["img"], area)
 
@@ -645,10 +773,13 @@ def main(argv=None) -> int:
         toast(f"Erro interno ({type(error).__name__}) registrado em logs/erros.log; o app segue")
         return len(error_times) <= 30
 
+    if args.uso:
+        set_use(True)
     running = True
     while running:
         try:
             clock.tick(args.fps)
+            perf["mark"] = time.perf_counter()
             now_abs = time.perf_counter()
             elapsed = now_abs - last
             dt = min(elapsed, 0.05)
@@ -657,14 +788,57 @@ def main(argv=None) -> int:
             if args.run_seconds and now > args.run_seconds:
                 running = False
             hud.hint_age += dt
+            if use["corner"] is not None:
+                hud.use_exit = min(1.0, (now - use["corner"]) / 1.2)
+                if hud.use_exit >= 1.0:
+                    set_use(False)
             hud.active_actions = tuple(robot.actions.active())
             hud.toast_age += dt
 
             for ev in pygame.event.get():
+                if use["on"] and ev.type not in (pygame.QUIT, pygame.VIDEORESIZE):
+                    # Modo de uso: só falar com o robô. F10 ou toque longo no canto superior direito saem.
+                    corner = pygame.Rect(renderer.screen.get_width() - int(96 * renderer.s), 0,
+                                         int(96 * renderer.s), int(96 * renderer.s))
+                    if ev.type == pygame.KEYDOWN and ev.key == pygame.K_F10:
+                        set_use(False)
+                    elif ev.type == pygame.KEYDOWN and ev.key == pygame.K_F11:
+                        fullscreen = not fullscreen
+                        hud.fullscreen = fullscreen
+                        screen = open_window()
+                        relayout(screen)
+                    elif ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and corner.collidepoint(ev.pos):
+                        use["corner"] = now
+                    elif ev.type == pygame.MOUSEBUTTONUP:
+                        use["corner"], hud.use_exit = None, 0.0
+                        panel.handle_event(ev, assistant)
+                    elif ev.type != pygame.KEYDOWN or ev.key != pygame.K_ESCAPE or assistant.snapshot().state not in ("idle", "error"):
+                        panel.handle_event(ev, assistant)      # Esc só interrompe a resposta; nunca fecha o app
+                    continue
                 if key_entry.active and ev.type not in (pygame.QUIT, pygame.VIDEORESIZE):
                     result = key_entry.handle_event(ev)
                     if result and result[0] == "save":
                         api_save_key(result[1], key_entry.kind)
+                    continue
+                if chat.active and ev.type not in (pygame.QUIT, pygame.VIDEORESIZE):
+                    result = chat.handle_event(ev)
+                    if result and result[0] == "new":
+                        assistant.new_conversation()
+                        toast("Nova conversa")
+                    elif result and result[0] == "resume":
+                        n = assistant.resume_session(result[1])
+                        toast(f"Conversa retomada ({n} trocas)" if n else "Conversa vazia")
+                    elif result and result[0] == "mem_note":
+                        if result[1] and hasattr(assistant, "memory_note"):
+                            assistant.memory_note(result[1])
+                        toast("Memória atualizada")
+                        audio_state()
+                    elif result and result[0] == "delete":
+                        if result[1] == getattr(assistant, "session_id", None):
+                            assistant.new_conversation()
+                        historico.delete(result[1])
+                        memory.forget_session(result[1])
+                        toast("Conversa apagada")
                     continue
                 if panel.typing and ev.type not in (pygame.QUIT, pygame.VIDEORESIZE):
                     panel.handle_event(ev, assistant)
@@ -684,8 +858,44 @@ def main(argv=None) -> int:
                     except OSError:
                         toast("Ajuste aplicado; não foi possível salvar a preferência")
                     continue
+                if action == "use":
+                    set_use(True)
+                    continue
+                if action == "history":
+                    chat.open(getattr(assistant, "session_id", ""), memory=memory)
+                    continue
                 if action and action.startswith("remote:"):
                     remote_action(action.split(":", 1)[1])
+                    continue
+                if action and action.startswith("audio:"):
+                    name = action.split(":", 1)[1]
+                    if name == "continuous" and hasattr(assistant, "set_continuous"):
+                        assistant.set_continuous(not assistant.continuous)
+                        toast("Conversa contínua " + ("ligada: fale quando quiser" if assistant.continuous else "desligada"))
+                    elif name == "memory":
+                        if args.sem_registro or args.sem_memoria:
+                            toast("Memória bloqueada por --sem-registro/--sem-memoria")
+                        else:
+                            memory.enabled = not memory.enabled
+                            if memory.enabled and memory._conn is None:
+                                memory.healthy = True
+                                memory._init_db()
+                            audio_save()
+                            toast("Memória " + ("ligada: instruções e preferências ficam salvas" if memory.active else "desligada"))
+                    elif name == "forget":
+                        if time.perf_counter() - forget_armed["t"] < 6.0:
+                            forget_armed["t"] = 0.0
+                            memory.forget_all()
+                            toast("Memória apagada")
+                        else:
+                            forget_armed["t"] = time.perf_counter()
+                            toast("Toque de novo em 6 s para apagar instruções, preferências e histórico da memória")
+                    elif name == "eco":
+                        order = audio_duplex.MODES
+                        hub.set_mode(order[(order.index(hub.mode) + 1) % len(order)])
+                        audio_save()
+                        toast("Áudio: " + audio_duplex.MODE_LABELS[hub.mode])
+                    audio_state()
                     continue
                 if action and action.startswith("body:"):
                     if action == "body:enabled":
@@ -817,6 +1027,7 @@ def main(argv=None) -> int:
                 elif using_sim and ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 3:
                     sim.toggle_mouse_face()
 
+            lap("eventos")
             # ---- entrada ---------------------------------------------------------
             if using_sim:
                 mx, my = pygame.mouse.get_pos()
@@ -847,7 +1058,9 @@ def main(argv=None) -> int:
                     body["head2d"] = None
                 else:
                     robot.attention.look_at(look[0], look[1], .25, now)
+            lap("entrada")
             frame = robot.step(dets, now, dt)
+            lap("robo")
             lt = robot.last_trigger
             if lt and lt["sequence"] != body.get("seen_sign"):
                 body["seen_sign"] = lt["sequence"]               # gesto visto pela câmera (local, sem IA)
@@ -883,9 +1096,36 @@ def main(argv=None) -> int:
             else:
                 metrics.accept(dets)
 
+            lap("resto")
             # ---- desenho ---------------------------------------------------------
             fps_avg = 0.95 * fps_avg + 0.05 * (1.0 / max(elapsed, 1e-3))
             hud.fps = fps_avg
+            perf["ms"].append(elapsed * 1000)
+            if now - perf["t"] >= 10.0:                      # logs/desempenho.log: uma linha a cada 10 s (para medir no PC real)
+                ms = sorted(perf["ms"]); n = len(ms)
+                o3 = body["obj"] if body["on"] and body["obj"] is not None else None
+                try:
+                    LOG_DIR.mkdir(exist_ok=True)
+                    with open(LOG_DIR / "desempenho.log", "a", encoding="utf-8") as fh:
+                        fh.write(f"{time.strftime('%H:%M:%S')} fps={n / max(1e-3, now - perf['t']):.1f} "
+                                 f"quadro_p50={ms[n // 2]:.1f}ms p95={ms[int(n * .95)]:.1f}ms max={ms[-1]:.1f}ms "
+                                 f"3d={'%.1fms q%d x%.2f' % (o3.render_ms, o3.q, o3.scale) if o3 else 'off'} "
+                                 f"operador={'sim' if remote.get('operator') else 'nao'} leve={'sim' if args.leve else 'nao'} "
+                                 f"cpu={100 * (sum(os.times()[:2]) - perf['cpu']) / max(1e-3, now - perf['t']):.0f}% "
+                                 f"etapas_ms[{' '.join('%s=%.1f' % (k, v / n) for k, v in perf['laps'].items())}]\n")
+                except OSError:
+                    pass
+                try:                                         # quem está gastando CPU (identifica a thread culpada)
+                    cur = thread_cpu()
+                    top = sorted(((cur[k] - perf["thr"].get(k, 0.0), k) for k in cur), reverse=True)[:5]
+                    if cur:
+                        with open(LOG_DIR / "desempenho.log", "a", encoding="utf-8") as fh:
+                            fh.write("    threads: " + " ".join("%s=%.0f%%" % (thread_name(k), 100 * d / max(1e-3, now - perf["t"]))
+                                                               for d, k in top if d > 0.01) + "\n")
+                    perf["thr"] = cur
+                except Exception:
+                    pass
+                perf["t"], perf["ms"], perf["laps"], perf["cpu"] = now, [], {}, sum(os.times()[:2])
             hud.simulated = using_sim
             hud.detect_fps = src.detect_fps if camera_ready else None
             hud.latency_ms, hud.latency_p95_ms = metrics.latency_ms, metrics.p95_ms
@@ -910,8 +1150,10 @@ def main(argv=None) -> int:
                 draw_body(frame, now, dt)
             else:
                 renderer.draw_panel(frame, dt, reduce_motion)
+            lap("cena")
             panel.live = src.preview() if camera_ready and hasattr(src, "preview") else (None, 0)
             panel.draw(renderer, assistant, dt, reduce_motion, ai_label())
+            lap("painel")
             renderer.draw_hud(frame, hud)
             if hud.remote.get("operator") and hud.remote.get("badge", True):   # Ajustes → Controle remoto → Aviso na tela
                 modo = {"autonomo": "autônomo", "assistido": "assistido", "teleoperado": "teleoperado"}.get(
@@ -920,11 +1162,14 @@ def main(argv=None) -> int:
                                (renderer.panel.centerx, int(16 * renderer.s)), "tc", "circle",
                                renderer.scheme.palette["red"])
             key_entry.draw(renderer, hud.api.get("source", ""))
+            chat.draw(renderer, getattr(assistant, "session_id", ""))
+            lap("hud")
             pygame.display.flip()
+            lap("flip")
             metrics.presented(time.perf_counter())
 
             # qualidade adaptativa: se estiver pesado, desliga o brilho
-            slow_frames = slow_frames + 1 if elapsed > 0.026 else 0
+            slow_frames = slow_frames + 1 if elapsed > 1.6 / max(1, args.fps) else 0
             if slow_frames > 90 and renderer.glow_on:
                 renderer.glow_on = False
                 toast("Brilho desligado para manter a fluidez")
@@ -934,8 +1179,11 @@ def main(argv=None) -> int:
                 raise
 
     assistant.shutdown()
+    memory.flush(1.0)
+    memory.close()
     led_link.stop()
     remote_stop()
+    hub.close()
     if body["obj"] is not None:
         body["obj"].release()
     if hasattr(src, "stop"):

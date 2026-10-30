@@ -57,21 +57,23 @@ pendente e `conversation.item.truncate(audio_end_ms = amostras tocadas)`. Funç�
 1. **Realtime por WebSocket** — app Python desktop (WebRTC é para navegador). Sem SDK no caminho principal: só `websockets`,
    eventos JSON documentados (evita depender de versão do SDK).
 2. **Fim de fala local** (`turn_detection: null`) — mantém os controles Ouvir/Enviar/Cancelar e garante a imagem antes da resposta.
-3. **Meia-duplex** — microfone fechado enquanto ela fala: elimina o eco sem cancelador acústico. Interromper é por Espaço.
+3. **Duplex com cancelamento de eco** (`audio_duplex.py`) — um microfone só, repartido entre IA (24 kHz) e operador (48 kHz),
+   com o som tocado pelo alto-falante como referência (filtro adaptativo + detecção de fala dupla). Permite falar por cima
+   (barge-in por voz na conversa contínua) e ligação com o operador. Modos: eco (padrão), fone de ouvido e meia-via (antigo).
 4. **Expressões por function calling** — a IA decide a intenção (`expressar(emocao, acao)`); o motor local anima e a fala não lê comandos.
 5. **Modo legado explícito** — `--ia legado`; nunca é usado como reserva silenciosa.
 
 ## 6. Extensões
 
-- **Aba API** (Ajustes → API): chave colada pela interface e gravada no `.env` (mascarada na tela), teste de
+- **Aba API** (Ajustes → Conversa e IA): chave colada pela interface e gravada no `.env` (mascarada na tela), teste de
   conexão, troca de modelo/voz; a sessão Realtime se refaz sozinha.
 - **Visão pausada** (tecla V): conversa sem enviar imagens; o rastreamento local continua.
-- **Painel físico** (Ajustes → Arduino): os mesmos olhos em 32×8 (16×8 por olho) num Arduino Uno + 4× MAX7219,
+- **Painel físico** (Ajustes → Conexões → Painel LED): os mesmos olhos em 32×8 (16×8 por olho) num Arduino Uno + 4× MAX7219,
   pela USB. Detalhes em [`ARDUINO.md`](ARDUINO.md).
 - **Controle remoto (etapa 2)**: sala do operador no navegador (aiohttp + aiortc/WebRTC, HTTPS + PIN) com modos
   autônomo/assistido/teleoperado, voz ao vivo, frases, expressões e olhar; voz robótica comum à IA e ao operador.
   Detalhes em [`CONTROLE_REMOTO.md`](CONTROLE_REMOTO.md).
-- **Corpo 3D** (F3 ou Ajustes → Corpo 3D): modelo feito em Blender (`blender/nuria_3d.py` → `models/nuria3d.npz`), peças
+- **Corpo 3D** (F3 ou Ajustes → Corpo e gestos): modelo feito em Blender (`blender/nuria_3d.py` → `models/nuria3d.npz`), peças
   rígidas presas a 29 pivôs (cabeça, ombros, cotovelos, punhos, dedos). `gestos.py` descreve cada gesto pela posição do punho,
   direção dos dedos/palma e dobra dos dedos; uma cinemática inversa de dois ossos gera as matrizes. `corpo3d.py` desenha com
   OpenGL 3.3 (moderngl) fora da tela e projeta no visor o mesmo rosto de LEDs do 2D. Gestos chegam da IA (parâmetro `gesto`
@@ -87,3 +89,14 @@ pendente e `conversation.item.truncate(audio_end_ms = amostras tocadas)`. Funç�
 - **Robustez**: cada quadro do laço principal é protegido (erro → `logs/erros.log` + aviso); `faulthandler` grava falhas
   nativas em `logs/falhas.log`; o vídeo do operador lê o último quadro da câmera sem disputar a foto da pergunta.
 
+
+## Menu de Ajustes, Modo de uso e modo leve
+
+- **Telas agrupadas** (`menu.OptionsMenu.COMBINED`): Reações e rosto (percepção, expressão, rosto), Corpo e gestos (corpo 3D, gestos,
+  simulações), Conversa e IA (API, voz, conversa contínua, microfone) e Conexões (sala do operador, painel LED). Cada tela tem seções.
+- **Rolagem**: roda do mouse rola a janela (não o foco), arrastar com mouse/dedo, barra clicável e arrastável, PgUp/PgDn. O layout é
+  cacheado e só recalcula quando algo muda.
+- **Modo de uso** (`main.set_use`, `AssistantPanel.simple`, `Renderer._use_hud`): entrada filtrada para o painel; F10 ou toque longo no
+  canto saem. **Modo leve** (`--leve`): 30 fps, sem brilho nem vidro desfocado, detecção menor.
+- **Áudio**: `HubMic` limita a fila a 3 blocos de 20 ms; a voz do operador é reamostrada com estado (`StreamResampler`) e o
+  `StreamPlayer` tem buffer de jitter de 60 ms (reagrupa depois de um esvaziamento). Voz robótica ao vivo com 45 % de voz original.

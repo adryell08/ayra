@@ -29,6 +29,7 @@ SHORTCUTS = [
     ("Enter", "Ayra: digitar a pergunta (Enter envia, Esc cancela)"),
     ("V", "Ayra: pausar/retomar a visão (só conversa, sem enviar imagem)"),
     ("F3", "Alternar rosto 2D / corpo 3D com gestos"),
+    ("L", "Conversa contínua: microfone travado (ou arraste o botão de falar para cima)"),
     ("Esc", "Durante uma pergunta: cancelar"),
     ("Esc / Q", "Fechar menu/ajuda; Q encerra o aplicativo"),
     ("F10", "Menu: setas ou Tab navegam; Enter confirma; Esc fecha"),
@@ -60,6 +61,8 @@ class HudInfo:
     fps: float = 0.0
     hud_mode: str = "minimal"          # full | minimal | off
     show_help: bool = False
+    use_mode: bool = False             # Modo de uso: só a interação com o robô
+    use_exit: float = 0.0              # progresso (0–1) do toque longo no canto para sair
     hint_age: float = 0.0
     reduce_motion: bool = False
     toast: str = ""
@@ -97,6 +100,7 @@ class HudInfo:
     api: dict = field(default_factory=dict)          # estado da aba API (chave mascarada, teste, modelo, voz)
     remote: dict = field(default_factory=dict)       # sala do operador (controle remoto, etapa 2)
     body: dict = field(default_factory=dict)         # corpo 3D (ligado, motivo se indisponível)
+    audio: dict = field(default_factory=dict)        # eco (modo) e conversa contínua
 
 
 class Renderer:
@@ -104,6 +108,7 @@ class Renderer:
         self.W, self.H = grid
         self.scheme = scheme
         self.glow_on = glow
+        self.light = False                      # modo leve: sem vidro desfocado
         self._fonts: Dict[Tuple[str, int], pygame.font.Font] = {}
         self._txt: Dict[tuple, pygame.Surface] = {}
         self._prev: Optional[np.ndarray] = None
@@ -301,7 +306,7 @@ class Renderer:
         """Vidro somente sobre a arte do robô; alto contraste usa fundo opaco."""
         sc = self.scheme
         card = pygame.Surface(rect.size, pygame.SRCALPHA)
-        if blur and sc.key != "contrast" and self.screen.get_rect().contains(rect):
+        if blur and not self.light and sc.key != "contrast" and self.screen.get_rect().contains(rect):
             backdrop = self.screen.subsurface(rect)
             small = pygame.transform.smoothscale(backdrop, (max(1, rect.w // 12), max(1, rect.h // 12)))
             card.blit(pygame.transform.smoothscale(small, rect.size), (0, 0))
@@ -333,6 +338,13 @@ class Renderer:
         elif name == "motion":
             for i, length in enumerate((11, 7, 11)):
                 pygame.draw.line(self.screen, color, (x-k(length), y+k((i-1)*6)), (x+k(length), y+k((i-1)*6)), w)
+        elif name == "history":                                  # balão de conversa com rabinho e duas linhas
+            body = pygame.Rect(x-k(12), y-k(10), k(24), k(17))
+            pygame.draw.rect(self.screen, color, body, w, border_radius=k(6))
+            pygame.draw.polygon(self.screen, self.scheme.chip, [(x-k(7), y+k(6)), (x-k(2), y+k(6)), (x-k(8), y+k(12))])
+            pygame.draw.lines(self.screen, color, False, [(x-k(7), y+k(6)), (x-k(8), y+k(12)), (x-k(2), y+k(7))], w)
+            for dy in (-4, 1):
+                pygame.draw.line(self.screen, color, (x-k(6), y+k(dy)), (x+k(6 if dy < 0 else 2), y+k(dy)), w)
         else:
             for i, dx in enumerate((-5, 5, -2)):
                 yy = y+k((i-1)*8)
@@ -452,6 +464,9 @@ class Renderer:
         p = self.panel
         left, top, right, bottom = pad, pad, self.screen.get_width() - pad, self.screen.get_height() - pad
         pal = sc.palette
+        if hud.use_mode:
+            self._use_hud(hud, pad)
+            return
         self.menu.layout(self.screen, s, len(self.menu.items(hud, sc)))
 
         # indicador de câmera: SEMPRE visível (transparência sobre o uso da câmera)
@@ -511,6 +526,28 @@ class Renderer:
             self._debug(rf, hud, (left, r_cam.bottom + pad), (right, bottom))
         self._toast_and_help(rf, hud, pad)
         self.menu.draw(self, hud)
+
+    def _use_hud(self, hud: HudInfo, pad: int) -> None:
+        """Modo de uso: nenhum painel, menu ou diagnóstico. Fica só um ponto de câmera (transparência) e,
+        nos primeiros segundos, a dica de como sair."""
+        sc, s, pal = self.scheme, self.s, self.scheme.palette
+        col = {"ok": pal["green"], "paused": pal["orange"], "sim": pal["indigo"]}.get(hud.camera_status, pal["red"])
+        pygame.draw.circle(self.screen, col, (pad + int(6 * s), pad + int(6 * s)), max(4, int(5 * s)))
+        if hud.hint_age < 6.0 and not hud.use_exit:
+            t = self._text("footnote", "Modo de uso  ·  F10 ou segure o canto superior direito para sair", sc.text_dim)
+            w, h = t.get_width() + 2 * pad, t.get_height() + pad
+            surf = pygame.Surface((w, h), pygame.SRCALPHA)
+            a = max(0.0, min(1.0, (6.0 - hud.hint_age) / 1.0))
+            pygame.draw.rect(surf, (*sc.chip, int(sc.chip_alpha * a)), surf.get_rect(), border_radius=h // 2)
+            tt = t.copy(); tt.set_alpha(int(255 * a))
+            surf.blit(tt, (pad, (h - t.get_height()) // 2))
+            self.screen.blit(surf, (self.screen.get_width() // 2 - w // 2, pad))
+        if hud.use_exit > 0:
+            c = (self.screen.get_width() - pad - int(22 * s), pad + int(22 * s))
+            r = int(18 * s)
+            pygame.draw.circle(self.screen, sc.text_dim, c, r, max(1, int(2 * s)))
+            pygame.draw.arc(self.screen, sc.text, pygame.Rect(c[0] - r, c[1] - r, 2 * r, 2 * r), math.pi / 2,
+                            math.pi / 2 + 2 * math.pi * min(1.0, hud.use_exit), max(2, int(3 * s)))
 
     def _hint(self, a: float, pad: int) -> None:
         sc = self.scheme

@@ -290,6 +290,9 @@ NOD_F, NOD_N = 1.6, 3            # "sim": 3 acenos para baixo e de volta (nunca 
 SHAKE_F, SHAKE_N = 1.5, 3        # "não": 3 idas e voltas, entrando e saindo suaves
 
 
+HEAD_ONLY = ("sim", "nao")
+
+
 def nod(t: float) -> float:
     """0 (neutro) .. 1 (cabeça baixa); começa e termina exatamente em 0."""
     if t <= 0 or t >= NOD_N / NOD_F:
@@ -376,6 +379,12 @@ class Animator:
             t = now - self.started
             if t >= g.duration:
                 self.current = None
+            elif self.current in HEAD_ONLY:
+                # sim/não: o movimento SOMA ao olhar atual (sem puxar a cabeça para a frente nem dar tranco);
+                # com "reduzir movimento" continua visível, só menor (o gesto é a mensagem)
+                k = .5 if reduce_motion else 1.0
+                gh = g.pose(t).head
+                pose = replace(base, head=(base.head[0] + k * gh[0], base.head[1] + k * gh[1], base.head[2] + k * gh[2]))
             else:
                 target = g.pose(0.0 if reduce_motion else t)
                 # cabeça: o gesto soma ao olhar

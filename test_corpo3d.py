@@ -148,6 +148,15 @@ def test_animator():
         jump = max(abs(x - y) for x, y in zip(vals, vals[1:]))
         check(f"{GESTURES[name]}: começa e termina no neutro, sem tranco (máx. {jump:.3f} rad/quadro)",
               abs(vals[0]) < 1e-3 and abs(vals[-1]) < 1e-3 and jump < .06 and max(abs(v) for v in vals) > .12)
+    for rm in (False, True):
+        an, idle = Animator(), Animator()
+        an.play("nao", 0.0)
+        yaws = [an.pose(k / 60, gaze=(.7, .2), reduce_motion=rm).head[0]
+                - idle.pose(k / 60, gaze=(.7, .2), reduce_motion=rm).head[0] for k in range(130)]
+        jump = max(abs(x - y) for x, y in zip(yaws, yaws[1:]))
+        check(f"não com rosto rastreado{' e movimento reduzido' if rm else ''}: gira de verdade, sem puxar a cabeça "
+              f"para a frente nem tique (amplitude {max(map(abs, yaws)):.2f} rad, salto {jump:.3f})",
+              max(map(abs, yaws)) > (.12 if rm else .25) and abs(yaws[0]) < 1e-3 and abs(yaws[-1]) < 1e-3 and jump < .06)
     an = Animator()
     an.play("sim", 0.0)
     pitches = [an.pose(k / 60).head[1] for k in range(120)]
@@ -266,7 +275,7 @@ def test_menu():
     m.activate("body")
     items = m.items(hud, theme.SCHEMES["dark"])
     check("liga/desliga + um item por gesto", items[0][0] == "body:enabled"
-          and [a.split(":")[2] for a, *_ in items[1:]] == list(GESTURES))
+          and [a.split(":")[2] for a, *_ in items[1:] if a.startswith("body:gesture:")] == list(GESTURES))
     hud.body = dict(enabled=False, error="instale o pacote moderngl")
     check("mostra o motivo quando o 3D não está disponível", "moderngl" in m.items(hud, theme.SCHEMES["dark"])[0][2])
     check("tocar num gesto mantém a aba aberta", m.activate("body:gesture:joia") == (True, "body:gesture:joia") and m.view == "body")

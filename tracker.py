@@ -328,6 +328,16 @@ def make_detector(model: Optional[Path] = None, det_width: int = 416, mirror: bo
 # --------------------------------------------------------------------------
 # Fontes de detecções
 # --------------------------------------------------------------------------
+def lower_thread_priority() -> None:
+    """Visão em segundo plano com prioridade abaixo do normal (Windows): a interface e o áudio ganham a CPU."""
+    try:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        kernel.SetThreadPriority(kernel.GetCurrentThread(), -1)          # THREAD_PRIORITY_BELOW_NORMAL
+    except Exception:
+        pass
+
+
 class CameraSource:
     """Captura e detecção em thread própria: o desenho nunca espera pela câmera.
 
@@ -336,6 +346,7 @@ class CameraSource:
     `capture_still()` entrega UMA cópia do quadro atual quando o usuário faz uma pergunta.
     """
     kind = "camera"
+    DETECT_HZ = 15.0                  # detecções de rosto por segundo (a câmera continua a 30; o resto é descartado)
 
     def __init__(self, detector, index: Optional[int] = None, width: int = 640, height: int = 480):
         self.detector = detector
@@ -550,8 +561,10 @@ class CameraSource:
         return None
 
     def _run(self) -> None:
+        lower_thread_priority()
         cap = None
         t_prev, ema = time.perf_counter(), 0.0
+        last_detect = 0.0
         while not self._stop.is_set():
             with self._lock:
                 pending, self._pending_features = self._pending_features, {}
@@ -591,7 +604,7 @@ class CameraSource:
                 self._still_ready.set()
             if ok and frame is not None:
                 tnow = time.perf_counter()
-                if tnow - self._full_wanted < 1.0 and tnow - self._full_last >= 1 / 10:
+                if tnow - self._full_wanted < 1.0 and tnow - self._full_last >= 1 / 16:
                     with self._lock:
                         self._full, self._full_last = frame.copy(), tnow
                 if tnow - self._preview_wanted < 1.0 and tnow - self._preview_last >= 1 / 15:
@@ -620,6 +633,10 @@ class CameraSource:
                 with self._lock:
                     self._latest = []
                 continue
+            if time.perf_counter() - last_detect < 1.0 / max(1.0, self.DETECT_HZ):
+                del frame                                  # sem CPU para detectar 30×/s: 15 Hz bastam para o olhar
+                continue
+            last_detect = time.perf_counter()
             try:
                 dets = self.detector.detect(frame)
             except Exception as e:
