@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+os.environ.setdefault("NURIA_VISAO", "sempre")      # estes testes cobrem a foto por pergunta; o modo sob demanda está em test_visao.py
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))

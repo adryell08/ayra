@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import os
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -111,6 +112,9 @@ class Renderer:
         self.light = False                      # modo leve: sem vidro desfocado
         self._fonts: Dict[Tuple[str, int], pygame.font.Font] = {}
         self._txt: Dict[tuple, pygame.Surface] = {}
+        self._glass_cache: Dict[tuple, tuple] = {}
+        self._xs = np.arange(self.W, dtype=np.float32) + .5      # centros das células (gradiente do painel)
+        self._ys = np.arange(self.H, dtype=np.float32) + .5
         self._prev: Optional[np.ndarray] = None
         self._tint: Tuple[float, float, float] = tuple(float(v) for v in scheme.led_on)
         self.menu = OptionsMenu()
@@ -137,11 +141,13 @@ class Renderer:
         self.panel = pygame.Rect((fw - pw) // 2, (sh - ph) // 2, pw, ph)
         self._fonts.clear()
         self._txt.clear()
+        self._glass_cache.clear()
         self._build_static()
 
     def set_scheme(self, scheme: Scheme) -> None:
         self.scheme = scheme
         self._txt.clear()
+        self._glass_cache.clear()
         self._build_static()
 
     def _build_static(self) -> None:
@@ -243,15 +249,15 @@ class Renderer:
         r0, r1 = int(ys.min()), int(ys.max()) + 1
         tint = np.array(self._tint, dtype=np.float32)
         hi = np.array(sc.highlight, dtype=np.float32)
-        yy, xx = np.mgrid[0:self.H, 0:self.W]
         # Luz interna, contínua e igual nos temas: centro vivo, borda serena.
         from face import EYE_DX, EYE_CY, EYE_HW, EYE_HH, GAZE_X, GAZE_Y
         gx, gy = rf.gaze
-        distance = np.minimum(*[
-            ((xx + .5 - (self.W / 2 + side * EYE_DX * self.H + gx * GAZE_X * self.H)) / (EYE_HW * self.H)) ** 2
-            + ((yy + .5 - (EYE_CY + gy * GAZE_Y) * self.H) / (EYE_HH * self.H)) ** 2
+        # exp(-1,5·(dx²+dy²)) é separável: dois vetores 1D por olho em vez de uma grade 2D (mesmo resultado)
+        ey = np.exp(-1.5 * ((self._ys - (EYE_CY + gy * GAZE_Y) * self.H) / (EYE_HH * self.H)) ** 2)[:, None]
+        gradient = np.maximum(*[
+            ey * np.exp(-1.5 * ((self._xs - (self.W / 2 + side * EYE_DX * self.H + gx * GAZE_X * self.H))
+                                / (EYE_HW * self.H)) ** 2)[None, :]
             for side in (-1, 1)])
-        gradient = np.exp(-distance * 1.5)
         inner = .02 + .05 * gradient
         if not reduce_motion:
             inner *= 1 + .025 * math.sin(self._visual_time * 1.7)
@@ -303,10 +309,18 @@ class Renderer:
 
     # ---- HUD ---------------------------------------------------------------
     def _glass(self, rect: pygame.Rect, radius: int, blur: bool = False) -> None:
-        """Vidro somente sobre a arte do robô; alto contraste usa fundo opaco."""
+        """Vidro somente sobre a arte do robô; alto contraste usa fundo opaco.
+        O cartão pronto fica em cache (tamanho, raio, tema); o desfoque do fundo é refeito no máx. a 15 Hz."""
         sc = self.scheme
+        blurred = blur and not self.light and sc.key != "contrast" and self.screen.get_rect().contains(rect)
+        key = (rect.size, radius, sc.key, tuple(sc.chip), blurred, rect.topleft if blurred else None)
+        now = time.perf_counter()
+        hit = self._glass_cache.get(key)
+        if hit is not None and (not blurred or now - hit[1] < 1 / 15):
+            self.screen.blit(hit[0], rect)
+            return
         card = pygame.Surface(rect.size, pygame.SRCALPHA)
-        if blur and not self.light and sc.key != "contrast" and self.screen.get_rect().contains(rect):
+        if blurred:
             backdrop = self.screen.subsurface(rect)
             small = pygame.transform.smoothscale(backdrop, (max(1, rect.w // 12), max(1, rect.h // 12)))
             card.blit(pygame.transform.smoothscale(small, rect.size), (0, 0))
@@ -320,6 +334,9 @@ class Renderer:
         pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(), border_radius=radius)
         card.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
         pygame.draw.rect(card, mix(sc.chip, sc.text, .15 if sc.key != "contrast" else 1), card.get_rect(), width=1, border_radius=radius)
+        if len(self._glass_cache) >= 6:                       # poucos cartões ao mesmo tempo: memória limitada
+            self._glass_cache.clear()
+        self._glass_cache[key] = (card, now)
         self.screen.blit(card, rect)
 
     def _icon(self, name, rect, color):

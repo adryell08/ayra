@@ -166,6 +166,136 @@ def test_animator():
           and gestos.head_gaze("sim", 9) == (0.0, 0.0) and "head_gaze(body[\"head2d\"]" in (HERE / "main.py").read_text(encoding="utf-8"))
 
 
+def test_channels():
+    print("Canais independentes: cabeça, braço esquerdo e braço direito")
+    wr = lambda h: np.array(h.wrist)
+    check("canais: um braço só nos de um braço, os dois nos de dois, nenhum nos de cabeça",
+          gestos.gesture_arms("tchau") == ("R",) and gestos.gesture_arms("aplaudir") == ("L", "R")
+          and gestos.gesture_arms("nao") == () and all(isinstance(gestos.gesture_arms(n), tuple) for n in LIBRARY))
+    # simultaneidade: tchau (braço direito) + joia (esquerdo) + não (cabeça)
+    an, solo_r, solo_l, solo_h = Animator(), Animator(), Animator(), Animator()
+    an.play("tchau", 0.0)
+    an.play("joia", 0.0, side="left")
+    an.play("nao", 0.0)
+    solo_r.play("tchau", 0.0)
+    solo_l.play("joia", 0.0, side="left")
+    solo_h.play("nao", 0.0)
+    check("simultâneos: três gestos ativos ao mesmo tempo", sorted(an.active()) == ["joia", "nao", "tchau"] and an.busy)
+    worst_r = worst_l = 0.0
+    yaw_range = [0.0, 0.0]
+    for k in range(int(2.0 * 60)):
+        now = k / 60
+        p, pr, pl, ph = an.pose(now), solo_r.pose(now), solo_l.pose(now), solo_h.pose(now)
+        worst_r = max(worst_r, float(np.abs(wr(p.right) - wr(pr.right)).max()))
+        worst_l = max(worst_l, float(np.abs(wr(p.left) - wr(pl.left)).max()))
+        yaw_range = [min(yaw_range[0], p.head[0]), max(yaw_range[1], p.head[0])]
+    check(f"simultâneos: cada braço faz exatamente o que faria sozinho (desvio {max(worst_r, worst_l):.1e})",
+          worst_r < 1e-9 and worst_l < 1e-9)
+    check("simultâneos: a cabeça balança (não) com os dois braços levantados", yaw_range[1] - yaw_range[0] > .2)
+    p = an.pose(1.0)
+    check("braço esquerdo levantado é do lado esquerdo (espelhado) e o direito do direito",
+          p.left.wrist[0] < 0 < p.right.wrist[0] and p.left.wrist[2] > REST.left.wrist[2] + .3)
+    # conflito: mesmo braço substitui; outro canal segue
+    an = Animator()
+    an.play("tchau", 0.0)
+    an.play("paz", 0.1)
+    check("conflito: mesmo braço — o gesto novo substitui o antigo", an.active() == ["paz"])
+    an.play("nao", 0.1)
+    an.play("joia", 0.2, side="left")
+    check("coexistência: cabeça + braço direito + braço esquerdo", sorted(an.active()) == ["joia", "nao", "paz"])
+    an.play("nao", 0.3)
+    check("conflito: cabeça substitui só o gesto de cabeça", sorted(an.active()) == ["joia", "nao", "paz"])
+    # dois braços reservam ambos
+    an = Animator()
+    an.play("tchau", 0.0)
+    an.play("joia", 0.0, side="left")
+    an.play("aplaudir", 0.5)
+    check("dois braços: reserva ambos e encerra os de um braço", an.active() == ["aplaudir"])
+    an.play("nao", 0.5)
+    check("dois braços convivem com gesto de cabeça", sorted(an.active()) == ["aplaudir", "nao"])
+    an.play("tchau", 1.0)
+    check("um braço interrompe gesto de dois braços (substitui-o inteiro)", sorted(an.active()) == ["nao", "tchau"])
+    # término suave: o braço solto volta ao repouso sem salto e o gesto de um braço termina no repouso
+    an = Animator()
+    an.play("aplaudir", 0.0)
+    prev, jump = None, 0.0
+    for k in range(int(1.0 * 60)):
+        now = k / 60
+        if abs(now - 0.8) < 1e-9:
+            an.play("tchau", now)                       # interrompe os dois braços: o esquerdo deve ser solto suavemente
+        p = an.pose(now)
+        cur = wr(p.left)
+        if prev is not None:
+            jump = max(jump, float(np.linalg.norm(cur - prev)))
+        prev = cur
+    check(f"término suave: braço liberado não dá tranco (máx. {jump:.3f} por quadro)", jump < .08)
+    for k in range(int(1.0 * 60), int(2.0 * 60)):
+        an.pose(k / 60)
+    check("braço liberado chega ao repouso", np.allclose(wr(an.pose(2.0).left), wr(REST.left), atol=1e-6))
+    for name in LIBRARY:
+        for side in ("right", "left"):
+            an = Animator()
+            an.play(name, 0.0, side=side)
+            end = LIBRARY[name].duration + .05
+            a = an.pose(0.0)
+            for k in range(int(end * 60) + 1):
+                a = an.pose(k / 60)
+            ok = (not an.busy and np.allclose(wr(a.left), wr(REST.left), atol=1e-6)
+                  and np.allclose(wr(a.right), wr(REST.right), atol=1e-6))
+            if not ok:
+                break
+        if not ok:
+            break
+    check("término: todo gesto (direita/esquerda) termina em repouso e libera os canais", ok)
+    # cabeça de um gesto de braço some quando um gesto de cabeça assume (sem tranco)
+    an = Animator()
+    an.play("pensar", 0.0)                              # inclina a cabeça
+    heads, prev, jump = [], None, 0.0
+    for k in range(int(1.6 * 60)):
+        now = k / 60
+        if abs(now - 1.0) < 1e-9:
+            an.play("sim", now)
+        h = np.array(an.pose(now).head)
+        if prev is not None:
+            jump = max(jump, float(np.abs(h - prev).max()))
+        prev = h
+    check(f"cabeça: floreio do braço cede a um gesto de cabeça sem tranco (máx. {jump:.3f} rad/quadro)", jump < .06)
+    # compatibilidade
+    an = Animator()
+    an = Animator()
+    an.play("tchau", 0.0, side="xyz")
+    an.play("aplaudir", 5.0, side="left")
+    an.play("nao", 5.0, side="left")
+    check("animador: lado inválido = direito; dois braços e cabeça ignoram o lado",
+          not any(x.left_side for x in an.acts) and sorted(an.active()) == ["aplaudir", "nao"])
+    check("compat: play(nome, agora) e atributos antigos", an.play("tchau", 2.0) and an.current == "tchau"
+          and an.started == 2.0 and an.busy and not Animator().play("voar", 0) and Animator().current is None)
+    one, lifted, still = Animator(), 0.0, True
+    one.play("ok", 0.0)
+    for k in range(int(2.2 * 60)):
+        po = one.pose(k / 60)
+        lifted = max(lifted, float(po.right.wrist[2]) - float(REST.right.wrist[2]))
+        still &= bool(np.allclose(wr(po.left), wr(REST.left)))
+    check("compat: um gesto sozinho levanta só o braço direito; o esquerdo fica em repouso", lifted > .5 and still)
+    multi = Animator()
+    multi.play("tchau", 0.0)
+    multi.play("joia", 0.0, side="left")
+    multi.play("nao", 0.0)
+    single = Animator()
+    single.play("tchau", 0.0)
+    n = 2000
+    t0 = time.perf_counter()
+    for k in range(n):
+        single.pose(0.5 + (k % 100) / 100)
+    t_single = (time.perf_counter() - t0) / n * 1e6
+    t0 = time.perf_counter()
+    for k in range(n):
+        multi.pose(0.5 + (k % 100) / 100)
+    t_multi = (time.perf_counter() - t0) / n * 1e6
+    check(f"custo de pose: {t_single:.0f} µs (1 gesto) e {t_multi:.0f} µs (3 gestos) — ordem de décimos de ms",
+          t_single < 400 and t_multi < 800)
+
+
 def test_render():
     print("Desenho 3D (OpenGL)")
     import corpo3d
@@ -191,6 +321,14 @@ def test_render():
     check("o rosto aparece no visor (e só no visor)", diff.sum() > 800 and ys.mean() < 320 * .45
           and abs(xs.mean() - 240) < 40)
     check(f"fundo igual ao do tema ({tuple(A[2, 2])})", tuple(A[2, 2]) == (10, 12, 16))
+    body.set_adaptive(True); body.q, body.scale = 2, 0.7; body.set_adaptive(False)
+    check("qualidade automática desligada volta ao máximo e não desce mais",
+          body.q == 0 and body.scale == 1.0 and not body.adaptive)
+    body.render_ms = 99.0; body._renders = 19; body._adapt(99.0)
+    check("desligada, mesmo pesado, a qualidade fica no máximo", body.q == 0)
+    body.set_adaptive(True); body.render_ms = 99.0; body._renders = 19; body._adapt(99.0)
+    check("ligada, pesado: desce um degrau", body.q == 1)
+    body.set_adaptive(False)
     body.play("comemorar", 1.0)
     c = body.render((480, 320), black, 2.0, bg=(10, 12, 16))
     C = pygame.surfarray.array3d(c).astype(int)
@@ -255,12 +393,39 @@ def test_ai_and_operator():
     check("operador/menu: pedido direto de gesto", a.request_gesture("joia") and a.snapshot().gesture_version == v1 + 1)
     check("o mesmo gesto pode repetir", a.request_gesture("joia") and a.snapshot().gesture_version == v1 + 2)
     check("gesto inválido é recusado", not a.request_gesture("x; drop") and a.snapshot().gesture == "joia")
+    check("lado: padrão continua direito (comando antigo sem lado)",
+          a.request_gesture("tchau") and a.snapshot().gesture_side == "")
+    check("lado: esquerdo e variações aceitos em gesto de um braço",
+          all(a.request_gesture("tchau", s) and a.snapshot().gesture_side == "left"
+              for s in ("esquerdo", "esquerda", "left", "Esquerdo", " L ")))
+    check("lado: direito explícito vira o padrão",
+          a.request_gesture("joia", "direito") and a.snapshot().gesture_side == "")
+    check("lado inválido não recusa o gesto: usa o direito",
+          all(a.request_gesture("tchau", s) and a.snapshot().gesture_side == "" for s in ("xyz", "", None, 7, "esq; drop")))
+    check("lado é ignorado em gestos de dois braços e de cabeça",
+          all(a.request_gesture(n, "esquerdo") and a.snapshot().gesture_side == "" for n in ("aplaudir", "comemorar", "sim", "nao")))
+    check("lado: gesto inválido continua recusado mesmo com lado", not a.request_gesture("voar", "esquerdo"))
+    v2 = a.snapshot().gesture_version
+    a.ask_text("dá tchau com a mão esquerda")
+    check("IA (simulada) pede o tchau com o braço esquerdo pelo campo lado",
+          h.wait(lambda: a.snapshot().gesture_version > v2 and a.snapshot().gesture == "tchau"
+                 and a.snapshot().gesture_side == "left", 5))
+    h.idle()
+    props = ar.TOOLS[0]["parameters"]["properties"]
+    check("ferramenta: lado é opcional (não entra em required) e enum curto",
+          props["lado"]["enum"] == ["direito", "esquerdo"] and ar.TOOLS[0]["parameters"]["required"] == ["emocao"])
+    main_src = (HERE / "main.py").read_text(encoding="utf-8")
+    check("despacho: operador e corpo 3D repassam o lado",
+          'request_gesture(str(data.get("nome", "")), data.get("lado"), source="operator")' in main_src
+          and "body_gesture(cmd.name, now, cmd.side)" in main_src and 'body["obj"].play(name, now, side or "right")' in main_src)
     h.close() if hasattr(h, "close") else None
     check("servidor aceita os comandos gesture e body", {"gesture", "body"} <= set(operador.COMMANDS))
     html = (HERE / "operador_web" / "index.html").read_text(encoding="utf-8")
     buttons = re.findall(r'data-g="([a-z_]+)"', html)
     check("página do operador: um botão por gesto, na mesma ordem", buttons == list(GESTURES))
     check("página do operador: chave Corpo 3D e estado do gesto", 'id="body3d"' in html and 'id="gest"' in html)
+    check("página do operador: escolha de braço enviada com o gesto, sem criar botões novos de gesto",
+          'id="gside"' in html and 'lado: $("gside").value' in html)
 
 
 def test_menu():
@@ -276,6 +441,11 @@ def test_menu():
     items = m.items(hud, theme.SCHEMES["dark"])
     check("liga/desliga + um item por gesto", items[0][0] == "body:enabled"
           and [a.split(":")[2] for a, *_ in items[1:] if a.startswith("body:gesture:")] == list(GESTURES))
+    check("item 'Qualidade automática do 3D' logo após o liga/desliga (liga/desliga próprio)",
+          items[1][0] == "body:quality" and items[1][3] in ("on", "off"))
+    hud.body = dict(enabled=True, auto=False)
+    q = [i for i in m.items(hud, theme.SCHEMES["dark"]) if i[0] == "body:quality"][0]
+    check("desligada: mostra 'sempre no máximo'", q[3] == "off" and "máximo" in q[2])
     hud.body = dict(enabled=False, error="instale o pacote moderngl")
     check("mostra o motivo quando o 3D não está disponível", "moderngl" in m.items(hud, theme.SCHEMES["dark"])[0][2])
     check("tocar num gesto mantém a aba aberta", m.activate("body:gesture:joia") == (True, "body:gesture:joia") and m.view == "body")
@@ -310,6 +480,7 @@ if __name__ == "__main__":
     test_model()
     test_rig()
     test_animator()
+    test_channels()
     test_render()
     test_ai_and_operator()
     test_menu()

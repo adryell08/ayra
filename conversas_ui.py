@@ -269,8 +269,8 @@ class ChatHistory:
                     y += r._font("footnote").get_linesize()
                 y += int(6 * s)
                 continue
-            tag = {"operator": "operador", "painel": "painel", "user": "usuário", "validated": "validado",
-                   "candidate": "não verificado"}.get(it[3], "")
+            tag = {"operator": "instrução", "painel": "instrução", "user": "instrução", "validated": "validado",
+                   "candidate": "não verificado"}.get(it[3], "")        # a origem da instrução não aparece na tela do robô
             lines = r._wrap("body", text, area.w - bw - 2 * pad)
             h = max(bh, len(lines) * line_h + r._font("footnote").get_linesize()) + int(14 * s)
             row = pygame.Rect(area.x, y, area.w, h)

@@ -124,3 +124,29 @@ def test_interface(check):
     _, glint = render_field(80, 45, EXPRESSIONS["neutral"], (1, 1), (0, 0))
     check("Nitidez: catchlight compacto tem núcleo branco e vizinhos legíveis",
           glint.max() == 1 and (glint > 0).sum() <= 32 and (glint > .1).sum() >= 6)
+    # cache do vidro e gradiente separável do painel
+    r = Renderer(pygame.display.set_mode((1280, 720)), (80, 45), theme.DARK_SCHEME)
+    rect = pygame.Rect(100, 100, 300, 200)
+    r.screen.fill((20, 30, 40))
+    r._glass(rect, 24)
+    first = r.screen.copy()
+    n_before = len(r._glass_cache)
+    r.screen.fill((20, 30, 40))
+    r._glass(rect, 24)
+    check("Vidro: cartão em cache, repetido pixel a pixel e sem crescer",
+          len(r._glass_cache) == n_before == 1 and pygame.image.tobytes(r.screen, "RGB") == pygame.image.tobytes(first, "RGB"))
+    r.set_scheme(theme.SCHEMES["light"] if "light" in theme.SCHEMES else theme.DARK_SCHEME)
+    check("Vidro: trocar tema limpa o cache", not r._glass_cache)
+    for i in range(20):
+        r._glass(pygame.Rect(10, 10, 100 + i, 80), 12)
+    check("Vidro: cache limitado (memória)", len(r._glass_cache) <= 6)
+    import numpy as np
+    from face import EYE_DX, EYE_CY, EYE_HW, EYE_HH, GAZE_X, GAZE_Y
+    W, H, gx, gy = 80, 45, .3, -.2
+    yy, xx = np.mgrid[0:H, 0:W]
+    old = np.exp(-1.5 * np.minimum(*[((xx + .5 - (W / 2 + s * EYE_DX * H + gx * GAZE_X * H)) / (EYE_HW * H)) ** 2
+                                     + ((yy + .5 - (EYE_CY + gy * GAZE_Y) * H) / (EYE_HH * H)) ** 2 for s in (-1, 1)]))
+    ey = np.exp(-1.5 * ((r._ys - (EYE_CY + gy * GAZE_Y) * H) / (EYE_HH * H)) ** 2)[:, None]
+    new = np.maximum(*[ey * np.exp(-1.5 * ((r._xs - (W / 2 + s * EYE_DX * H + gx * GAZE_X * H)) / (EYE_HW * H)) ** 2)[None, :]
+                       for s in (-1, 1)])
+    check("Painel: gradiente separável igual ao da grade 2D", float(np.abs(old - new).max()) < 1e-5)

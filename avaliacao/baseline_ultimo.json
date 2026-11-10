@@ -1,0 +1,544 @@
+{
+ "dataset": "SINTÉTICO: nenhum dado real. Nomes, fatos e códigos inventados só para medir recuperação de memória.",
+ "versao": 1,
+ "python": "3.14.7",
+ "api_paga": false,
+ "rede": false,
+ "banco_temporario": true,
+ "avisos": [
+  "tokens são ESTIMADOS (caracteres/4); tokens reais só no logs/uso_api.jsonl de sessões reais",
+  "tempo até o primeiro áudio NÃO é medido aqui (exige API real); aqui só o custo local da busca/montagem",
+  "o 'contexto' avalia o que a IA recebe no começo da sessão; a busca local ainda NÃO é chamada pelo caminho de voz"
+ ],
+ "escalas": {},
+ "fts5": true,
+ "banco": "C:\\Users\\adrye\\AppData\\Local\\Temp\\rag_baseline_lm95djvn\\base.db",
+ "casos": {
+  "C01": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 2
+   }
+  },
+  "C02": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 2
+   }
+  },
+  "C03": {
+   "contexto": {
+    "ok": false,
+    "contem_tudo": false,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 1
+   }
+  },
+  "C04": {
+   "contexto": {
+    "ok": false,
+    "contem_tudo": false,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 1
+   }
+  },
+  "C05": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   }
+  },
+  "C06": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   }
+  },
+  "C07": {
+   "contexto": {
+    "ok": false,
+    "contem_tudo": false,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 1
+   }
+  },
+  "C08": {
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": false,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": false,
+    "contem_tudo": false,
+    "vazamentos": [],
+    "resultados": 0
+   }
+  },
+  "C09": {
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados_devolvidos": 2,
+    "resultados": 2
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados_devolvidos": 0,
+    "resultados": 0
+   }
+  },
+  "C10": {
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados_devolvidos": 3,
+    "resultados": 3
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados_devolvidos": 0,
+    "resultados": 0
+   }
+  },
+  "C11": {
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados_devolvidos": 5,
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados_devolvidos": 0,
+    "resultados": 0
+   }
+  },
+  "C12": {
+   "contexto": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "respostas longas"
+    ],
+    "chars": 556
+   },
+   "busca_palavras": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "respostas longas"
+    ],
+    "resultados": 4
+   }
+  },
+  "C13": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "cliente por senhor"
+    ],
+    "resultados": 4
+   },
+   "busca_palavras": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "cliente por senhor"
+    ],
+    "resultados": 1
+   }
+  },
+  "C14": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "andar 2"
+    ],
+    "resultados": 2
+   },
+   "busca_palavras": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "andar 2"
+    ],
+    "resultados": 2
+   }
+  },
+  "C15": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "Bidu"
+    ],
+    "resultados": 4
+   },
+   "busca_palavras": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "Bidu"
+    ],
+    "resultados": 2
+   }
+  },
+  "C16": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 556
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 0
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 1
+   }
+  },
+  "C17": {
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 5
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 2
+   }
+  },
+  "C18": {
+   "contexto": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "chars": 328
+   },
+   "busca_crua": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 1
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 0
+   }
+  },
+  "C19": {
+   "contexto": {
+    "ok": false,
+    "contem_tudo": true,
+    "vazamentos": [
+     "Nome do usuário: Ana"
+    ],
+    "chars": 328
+   }
+  },
+  "C20": {
+   "contexto": {
+    "ok": false,
+    "contem_tudo": false,
+    "vazamentos": [],
+    "chars": 1093
+   },
+   "busca_palavras": {
+    "ok": true,
+    "contem_tudo": true,
+    "vazamentos": [],
+    "resultados": 2
+   }
+  }
+ },
+ "por_categoria": {
+  "conhecida": {
+   "contexto": {
+    "ok": 4,
+    "total": 7
+   },
+   "busca_crua": {
+    "ok": 5,
+    "total": 5
+   },
+   "busca_palavras": {
+    "ok": 5,
+    "total": 5
+   }
+  },
+  "parafrase": {
+   "busca_crua": {
+    "ok": 0,
+    "total": 1
+   },
+   "busca_palavras": {
+    "ok": 0,
+    "total": 1
+   }
+  },
+  "ausente": {
+   "busca_crua": {
+    "ok": 0,
+    "total": 3
+   },
+   "busca_palavras": {
+    "ok": 3,
+    "total": 3
+   }
+  },
+  "preferencia_alterada": {
+   "contexto": {
+    "ok": 0,
+    "total": 1
+   },
+   "busca_palavras": {
+    "ok": 0,
+    "total": 1
+   }
+  },
+  "revogacao_exclusao": {
+   "contexto": {
+    "ok": 3,
+    "total": 3
+   },
+   "busca_crua": {
+    "ok": 0,
+    "total": 3
+   },
+   "busca_palavras": {
+    "ok": 0,
+    "total": 3
+   }
+  },
+  "isolamento": {
+   "contexto": {
+    "ok": 2,
+    "total": 3
+   },
+   "busca_crua": {
+    "ok": 3,
+    "total": 3
+   },
+   "busca_palavras": {
+    "ok": 3,
+    "total": 3
+   }
+  },
+  "orcamento": {
+   "contexto": {
+    "ok": 0,
+    "total": 1
+   },
+   "busca_palavras": {
+    "ok": 1,
+    "total": 1
+   }
+  }
+ },
+ "contexto": {
+  "sint_ana": {
+   "chars": 556,
+   "palavras": 85,
+   "tokens_estimados": 139,
+   "truncado": false,
+   "limite_chars": 1100,
+   "consultas_sql": 2,
+   "consultas_sql_handoff": 3,
+   "tempo": {
+    "p50_ms": 1.631,
+    "p95_ms": 2.093,
+    "max_ms": 2.093,
+    "n": 20
+   }
+  },
+  "sint_bia": {
+   "chars": 328,
+   "palavras": 49,
+   "tokens_estimados": 82,
+   "truncado": false,
+   "limite_chars": 1100,
+   "consultas_sql": 2,
+   "consultas_sql_handoff": 3,
+   "tempo": {
+    "p50_ms": 1.73,
+    "p95_ms": 2.071,
+    "max_ms": 2.071,
+    "n": 20
+   }
+  },
+  "sint_cheio": {
+   "chars": 1093,
+   "palavras": 180,
+   "tokens_estimados": 273,
+   "truncado": true,
+   "limite_chars": 1100,
+   "consultas_sql": 2,
+   "consultas_sql_handoff": 3,
+   "tempo": {
+    "p50_ms": 2.12,
+    "p95_ms": 2.568,
+    "max_ms": 2.568,
+    "n": 20
+   }
+  }
+ },
+ "busca": {
+  "com_fts": {
+   "busca_crua": {
+    "p50_ms": 1.997,
+    "p95_ms": 3.027,
+    "consultas": 15
+   },
+   "busca_palavras": {
+    "p50_ms": 1.171,
+    "p95_ms": 2.546,
+    "consultas": 17
+   }
+  },
+  "sem_fts_like": {
+   "busca_crua": {
+    "p50_ms": 0.662,
+    "p95_ms": 1.375,
+    "consultas": 15
+   },
+   "busca_palavras": {
+    "p50_ms": 0.703,
+    "p95_ms": 1.412,
+    "consultas": 17
+   }
+  }
+ },
+ "banco_bytes": 4096,
+ "queries_por_contexto": {
+  "sint_ana": 2,
+  "sint_bia": 2,
+  "sint_cheio": 2
+ },
+ "regressoes": {
+  "test_ferramentas.py": {
+   "codigo": 0,
+   "resumo": "19/19 verificações OK (simuladas; sem rede nem API paga)",
+   "segundos": 13.3
+  },
+  "test_fila_operador.py": {
+   "codigo": 0,
+   "resumo": "21/21 verificações OK (simuladas; sem operador real)",
+   "segundos": 2.1
+  },
+  "test_orquestrador.py": {
+   "codigo": 0,
+   "resumo": "97/97 verificações OK (simuladas; sem rede, câmera nem o app do usuário)",
+   "segundos": 5.2
+  }
+ }
+}

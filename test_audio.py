@@ -356,7 +356,7 @@ def test_ui_and_settings():
     check("servidor: 10 quadros/s por padrão; 5 e 15 disponíveis", operador.VIDEO_FPS == 10 and operador.FPS_CHOICES == (5, 10, 15))
     html = (HERE / "operador_web" / "index.html").read_text(encoding="utf-8")
     check("sala do operador: deslizar para cima trava o 'Falar' (como no WhatsApp); T no teclado",
-          "lockTalk" in html and "pointermove" in html and "KeyT" in html and "Deslize para travar" in html)
+          "lockTalk" in html and "pointermove" in html and "KeyT" in html and "deslize para cima ou t para travar" in html.lower())
     check("sala do operador mostra FPS e o modo de áudio", 'id="fpsText"' in html and 'id="audioInfo"' in html)
     src = (HERE / "main.py").read_text(encoding="utf-8")
     check("microfone do robô para o operador sai do mesmo microfone, sem eco (HubMic)", "HubMic(hub)" in src

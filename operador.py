@@ -15,6 +15,7 @@ import asyncio
 import fractions
 import json
 import queue
+import re
 import secrets
 import socket
 import ssl
@@ -193,6 +194,8 @@ class OperatorServer:
     on_operator_audio(pcm 24 kHz): voz do operador enquanto segura "Falar"
     """
 
+    MAX_COMMANDS = 256           # fila de comandos do navegador (consumida a cada quadro pelo app)
+
     def __init__(self, frame_provider: Callable[[], Optional[np.ndarray]], telemetry: Callable[[], dict],
                  on_operator_audio: Callable[[np.ndarray], None], robot_muted: Callable[[], bool] = lambda: False,
                  port: int = 8765, pin: Optional[str] = None, use_tls: bool = True, mic_factory=None,
@@ -201,7 +204,10 @@ class OperatorServer:
         self.robot_muted = robot_muted
         self.fps = int(fps) if int(fps) in FPS_CHOICES else VIDEO_FPS
         self.port, self.pin, self.use_tls = port, pin or new_pin(), use_tls
-        self.commands: "queue.Queue[tuple]" = queue.Queue()
+        self.commands: "queue.Queue[tuple]" = queue.Queue(maxsize=self.MAX_COMMANDS)
+        self.commands_dropped = 0      # comandos descartados por fila cheia (o app esvazia a fila a cada quadro)
+        self.dropped_by_kind: dict = {}
+        self.commands_lost_important = 0   # perdas de fala/instrução/conexão/estado/interrupção que não eram só repetição
         self.mic_factory = mic_factory or (lambda: RobotMic(self.robot_muted))
         self.status = "desligado"
         self.operator = ""                       # nome/endereço do operador conectado
@@ -216,7 +222,13 @@ class OperatorServer:
         self._ready = threading.Event()
         self._error = ""
         self.failed_pins = 0
+        self.drop_grace = 20.0                   # s: queda de rede não devolve o robô ao autônomo na hora; dá tempo de o painel voltar
+        self.ice_grace = 6.0                     # s: 'disconnected' do ICE costuma se recuperar sozinho (Wi-Fi/troca de rede)
+        self.reconnections = 0                   # operador que voltou dentro da tolerância
+        self._clear_handle = None
+        self._ice_handle = None
         self.memory = None                       # memoria.Memory: painel /memoria (operador ou o próprio usuário)
+        self.rag_provider = None                 # () -> ContextAssembler | None: métricas do RAG no painel privado /rag
         self._mem_tokens: dict = {}              # token -> validade (s); entra com o mesmo PIN da sala
         self._mem_hits: list = []
         self._db_pool = None
@@ -295,6 +307,12 @@ class OperatorServer:
         app.router.add_post("/api/memoria/entrar", self._memory_login)
         app.router.add_get("/api/memoria", self._memory_get)
         app.router.add_post("/api/memoria/acao", self._memory_action)
+        app.router.add_get("/ayrabrain", self._brain_page)
+        app.router.add_get("/rag", self._rag_page)
+        app.router.add_get("/api/rag", self._rag_get)
+        app.router.add_post("/api/rag/acao", self._rag_action)
+        app.router.add_get("/api/ayrabrain", self._brain_get)
+        app.router.add_post("/api/ayrabrain/acao", self._brain_action)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         ctx = None
@@ -415,10 +433,115 @@ class OperatorServer:
             return False, ""
         ok, note = await self._db(run)
         if ok and note:
-            self.commands.put(("memory_note", {"texto": note}))    # a IA fica sabendo na hora
+            self._push(("memory_note", {"texto": note}))    # a IA fica sabendo na hora
         if ok:
             await self._db(mem.flush, 0.5)
         return web.json_response({"ok": bool(ok), "version": mem.version}, status=200 if ok else 400)
+
+    # ---- Ayrabrain: mapa das instruções e memórias (mesmo PIN/token do painel de memória; só lê quando a página pede) ----
+    BRAIN_ERRORS = {"ref_invalida": "Nó inválido.", "mesmo_no": "Escolha dois nós diferentes.",
+                    "relacao_invalida": "Tipo de ligação inválido.", "no_inexistente": "Esse nó não existe mais.",
+                    "ja_existe": "Essa ligação já existe.", "limite_ligacoes": "Limite de ligações atingido.",
+                    "limite_no": "Esse nó já tem ligações demais.", "nao_encontrada": "Ligação não encontrada.",
+                    "fila_cheia": "Memória ocupada; tente de novo.", "indisponivel": "Memória indisponível."}
+
+    async def _brain_page(self, request):
+        from aiohttp import web
+        return web.FileResponse(WEB_DIR / "ayrabrain.html", headers={"Cache-Control": "no-store"})
+
+    @staticmethod
+    def _int_arg(value, default: int, low: int, high: int) -> int:
+        try:
+            return max(low, min(int(value), high))
+        except (TypeError, ValueError):
+            return default
+
+    async def _brain_get(self, request):
+        from aiohttp import web
+        err = self._mem_guard(request)
+        if err is not None:
+            return err
+        qs = request.query
+        focus = qs.get("focus", "")[:14]
+        if focus and not re.fullmatch(r"[mi]:\d{1,9}", focus):
+            return web.json_response({"erro": self.BRAIN_ERRORS["ref_invalida"]}, status=400)
+        if not qs.get("q") and not focus and qs.get("v") == str(self.memory.version) and qs.get("offset", "0") == "0":
+            return web.json_response({"version": self.memory.version, "same": True})   # nada mudou: resposta mínima
+        data = await self._db(lambda: self.memory.brain_graph(
+            q=qs.get("q", "")[:80], focus=focus, limit=self._int_arg(qs.get("limit"), 80, 1, 150),
+            offset=self._int_arg(qs.get("offset"), 0, 0, 5000)))
+        if data.get("error"):
+            return web.json_response({"erro": self.BRAIN_ERRORS.get(data["error"], "Erro.")}, status=404 if data["error"] == "no_inexistente" else 503)
+        return web.json_response(data)
+
+    async def _brain_action(self, request):
+        from aiohttp import web
+        err = self._mem_guard(request)
+        if err is not None:
+            return err
+        try:
+            p = await request.json()
+        except Exception:
+            return web.json_response({"erro": "Requisição inválida."}, status=400)
+        if not isinstance(p, dict):
+            return web.json_response({"erro": "Requisição inválida."}, status=400)
+        mem, act = self.memory, str(p.get("acao", ""))
+        if act == "ligar":
+            ok, why = await self._db(lambda: mem.link(str(p.get("a", ""))[:14], str(p.get("b", ""))[:14],
+                                                      str(p.get("relacao", "relacionado"))[:20], actor=self.operator or "painel"))
+        elif act == "desligar":
+            ok, why = await self._db(lambda: mem.unlink(p.get("id")))
+        else:
+            return web.json_response({"erro": "Ação desconhecida."}, status=400)
+        if ok:
+            await self._db(mem.flush, 0.5)
+        return web.json_response({"ok": bool(ok), "motivo": why, "erro": "" if ok else self.BRAIN_ERRORS.get(why, "Não foi possível."),
+                                  "version": mem.version}, status=200 if ok else 400)
+
+    # ---- painel privado do RAG: só números (uso, prazos estourados, bloqueados, tempos) e a chave de desligar; nunca texto de conversa ----
+    async def _rag_page(self, request):
+        from aiohttp import web
+        return web.FileResponse(WEB_DIR / "rag.html", headers={"Cache-Control": "no-store"})
+
+    def _rag(self):
+        try:
+            return self.rag_provider() if self.rag_provider else None
+        except Exception:
+            return None
+
+    async def _rag_get(self, request):
+        from aiohttp import web
+        err = self._mem_guard(request)
+        if err is not None:
+            return err
+        asm = self._rag()
+        if asm is None:
+            return web.json_response(dict(disponivel=False, ligado=False, motivo="Memória desligada ou RAG indisponível."))
+        data = await self._db(asm.metricas)
+        data["disponivel"] = True
+        return web.json_response(data)
+
+    async def _rag_action(self, request):
+        from aiohttp import web
+        err = self._mem_guard(request)
+        if err is not None:
+            return err
+        try:
+            p = await request.json()
+        except Exception:
+            return web.json_response({"erro": "Requisição inválida."}, status=400)
+        asm = self._rag()
+        act = str(p.get("acao", "")) if isinstance(p, dict) else ""
+        if asm is None:
+            return web.json_response({"erro": "RAG indisponível."}, status=409)
+        if act == "desligar":
+            asm.desligar()
+            return web.json_response({"ok": True, "ligado": False})
+        if act == "ligar":
+            ok = asm.ligar()
+            return web.json_response({"ok": ok, "ligado": bool(asm.cfg.rag_ligado),
+                                      "erro": "" if ok else "O arquivo de configuração (rag.local.json) não autoriza ligar."}, status=200 if ok else 403)
+        return web.json_response({"erro": "Ação desconhecida."}, status=400)
 
     async def _offer(self, request):
         from aiohttp import web
@@ -434,7 +557,7 @@ class OperatorServer:
             await asyncio.sleep(1.0)                            # freia tentativas de adivinhar o PIN
             return web.json_response({"erro": "PIN incorreto."}, status=403)
         self.failed_pins = 0
-        await self._close_pc()                                  # um operador por vez: o novo assume
+        await self._close_pc(delay_clear=True)                  # um operador por vez: o novo assume (sem devolver ao autônomo)
         pc = RTCPeerConnection()
         self._pc = pc
         name = (str(params.get("nome", "")).strip() or request.remote or "operador")[:40]
@@ -445,7 +568,8 @@ class OperatorServer:
 
             @channel.on("message")
             def on_message(message):
-                self._handle_message(message)
+                if self._pc is pc and self._channel is channel:     # conexão antiga/fechada não comanda o robô
+                    self._handle_message(message)
 
         @pc.on("track")
         def on_track(track):
@@ -454,13 +578,22 @@ class OperatorServer:
 
         @pc.on("connectionstatechange")
         async def on_state():
-            if pc.connectionState == "connected":
+            state = pc.connectionState
+            if self._pc is not pc:
+                return
+            if state == "connected":
+                self._cancel_timers()
+                if self.operator == name:
+                    self.reconnections += 1 if self.status.startswith("operador reconectando") else 0
                 self.operator = name
                 self.status = f"operador conectado · {name}"
-                self.commands.put(("operator", name))
-            elif pc.connectionState in ("failed", "closed", "disconnected"):
-                if self._pc is pc:
-                    await self._close_pc()
+                self._push(("operator", name))
+            elif state == "disconnected":                       # pode voltar sozinho: espera antes de derrubar
+                self.status = f"operador reconectando · {name}"
+                if self._ice_handle is None:
+                    self._ice_handle = self._loop.call_later(self.ice_grace, lambda: self._loop.create_task(self._ice_expired(pc)))
+            elif state in ("failed", "closed"):
+                await self._close_pc(delay_clear=True)
 
         self._mic = self.mic_factory()
         mic_ok = self._mic.start()
@@ -473,7 +606,78 @@ class OperatorServer:
         return web.json_response({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type,
                                   "microfone": mic_ok})
 
-    async def _close_pc(self) -> None:
+    # Importância de cada comando quando a fila enche (0 = descarta primeiro). Os de "último vale" (estado) só perdem entradas
+    # que um comando mais novo do mesmo tipo já substituiu: o estado final fica correto e `interrupt`/`mode` nunca somem.
+    _RANK = {"look": 0, "expression": 1, "gesture": 2, "say": 3, "instruction": 3, "memory_note": 3, "operator": 4,
+             "mode": 5, "vision": 5, "body": 5, "robot_voice": 5, "ptt": 5, "interrupt": 6}
+    _LAST_WINS = ("mode", "vision", "body", "robot_voice", "ptt", "interrupt")
+
+    def _pick_victim(self, q, incoming):
+        """Quem sai da fila cheia para o `incoming` entrar: (item | None, motivo). None = o próprio `incoming` é descartado."""
+        kind = incoming[0]
+        items = list(q)
+        # 1) substituídos: comando de estado com outro mais novo do mesmo tipo (nada se perde de verdade)
+        last = {c[0]: i for i, c in enumerate(items)}
+        for i, c in enumerate(items):
+            if c[0] in self._LAST_WINS and (c[0] == kind or last[c[0]] != i):
+                return c, "substituido"
+        # 2) o menos importante (o mais antigo entre iguais), mas nunca à custa de algo mais importante que o novo
+        rank_in = self._RANK.get(kind, 3)
+        best = min(items, key=lambda c: self._RANK.get(c[0], 3), default=None)
+        if best is not None and self._RANK.get(best[0], 3) <= rank_in:
+            return best, "descartado"
+        return None, "novo_descartado"
+
+    def _push(self, item) -> None:
+        """Enfileira sem nunca bloquear a thread de rede. Fila cheia: primeiro saem comandos de estado já substituídos
+        (mode/vision/body/ptt/robot_voice/interrupt repetidos); depois o menos importante (olhar < expressão < gesto <
+        fala/instrução < conexão < estado < interrupção), o mais antigo entre iguais; um comando pouco importante não expulsa
+        um mais importante (ele mesmo é descartado). A ordem dos que ficam é preservada. Tudo é contado:
+        `commands_dropped` (total), `dropped_by_kind` e `commands_lost_important` (perdas que NÃO foram só substituição:
+        fala/instrução/conexão/estado/interrupção)."""
+        while True:
+            try:
+                self.commands.put_nowait(item)
+                return
+            except queue.Full:
+                with self.commands.mutex:
+                    q = self.commands.queue
+                    victim, why = self._pick_victim(q, item)
+                    if victim is None:
+                        self._count_drop(item, why)
+                        return
+                    q.remove(victim)
+                self._count_drop(victim, why)
+
+    def _count_drop(self, cmd, why: str) -> None:
+        self.commands_dropped += 1
+        kind = cmd[0]
+        self.dropped_by_kind[kind] = self.dropped_by_kind.get(kind, 0) + 1
+        if why != "substituido" and self._RANK.get(kind, 3) >= 3:
+            self.commands_lost_important += 1
+
+    def _cancel_timers(self) -> None:
+        for attr in ("_clear_handle", "_ice_handle"):
+            h = getattr(self, attr)
+            if h is not None:
+                h.cancel()
+                setattr(self, attr, None)
+
+    async def _ice_expired(self, pc) -> None:
+        self._ice_handle = None
+        if self._pc is pc and pc.connectionState != "connected":
+            await self._close_pc(delay_clear=True)
+
+    def _clear_operator(self) -> None:
+        self._clear_handle = None
+        if self._pc is None and self.operator:
+            self.operator = ""
+            self.status = "aguardando operador"
+            self._push(("operator", ""))                         # só agora o robô volta ao autônomo
+
+    async def _close_pc(self, delay_clear: bool = False) -> None:
+        """delay_clear=True (queda de rede): o operador some do painel só depois de `drop_grace` s; se ele voltar antes, nada muda no robô."""
+        self._cancel_timers()
         pc, self._pc = self._pc, None
         self._channel = None
         if self._mic is not None:
@@ -486,8 +690,12 @@ class OperatorServer:
             except Exception:
                 pass
         if self.operator:
+            if delay_clear and self._loop is not None and self.drop_grace > 0:
+                self.status = f"operador reconectando · {self.operator}"
+                self._clear_handle = self._loop.call_later(self.drop_grace, self._clear_operator)
+                return
             self.operator = ""
-            self.commands.put(("operator", ""))
+            self._push(("operator", ""))
         if self._runner is not None:
             self.status = "aguardando operador"
 
@@ -550,7 +758,7 @@ class OperatorServer:
             return
         if kind == "ptt":
             self.ptt = bool(data.get("ligado"))
-        self.commands.put((kind, data))
+        self._push((kind, data))
 
     async def _telemetry_loop(self) -> None:
         while True:

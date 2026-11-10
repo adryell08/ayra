@@ -15,11 +15,13 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import threading
 import time
 import unicodedata
 import uuid
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -27,9 +29,17 @@ import numpy as np
 import credenciais
 import ia
 import realtime as rt
+from contexto import CONFIG_PATH as RAG_CONFIG_PATH, RESULTADO_LIMITE, TOOL_LEMBRAR, ContextAssembler, RagConfig, executar_lembrar
 from assistente import Assistant
 from gestos import GESTURES
 from voz import MicStream, StreamPlayer, VoiceError
+
+COSMETIC_TOOLS = {"expressar"}            # ferramentas só visuais: não carregam informação para a fala
+MAX_COSMETIC_FOLLOWUPS = 1                # no máximo UMA continuação dedicada à fala por pergunta
+NO_SPEECH_NOTICE = "Não consegui responder agora. Pode repetir?"   # neutro: sem citar ferramenta, função ou operador
+MAX_STALE_RIDS = 8
+VOICE_DOWN_NOTICE = "Minha voz falhou agora; a resposta está em texto."   # neutro: igual para IA e operador, sem causa técnica
+MAX_DEFERRED = 8                          # avisos adiados em teleoperado (zero tráfego ao modelo)
 
 TOOLS = [{
     "type": "function",
@@ -49,25 +59,67 @@ TOOLS = [{
             "gesto": {"type": "string", "enum": ["nenhum"] + list(GESTURES),
                       "description": "Gesto do corpo 3D: " + ", ".join(f"{k}={v.lower()}" for k, v in GESTURES.items())
                                      + ". sim/nao mexem só a cabeça."},
+            "lado": {"type": "string", "enum": ["direito", "esquerdo"],
+                     "description": "Braço do gesto (só para gestos de um braço). Omitido = direito."},
         },
         "required": ["emocao"],
     },
 }]
 
+TOOL_LOOK = {
+    "type": "function", "name": "olhar",
+    "description": ("Tira uma foto da webcam agora e a entrega a você. Chame SOMENTE quando a resposta depender do que "
+                    "está na frente da câmera (objeto na mão, roupa, ambiente, quem está aqui). Não chame em conversa comum. "
+                    "Nunca fale sobre esta função."),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+TOOL_FACES = [
+    {"type": "function", "name": "lembrar_rosto",
+     "description": ("Cadastra o rosto de quem está na câmera com um nome, para reconhecê-lo depois. Primeiro chame com "
+                     "confirmado=false (ou omita) para iniciar; então PERGUNTE à pessoa se autoriza e espere o sim; só "
+                     "então chame com confirmado=true. Nunca cadastre sem o sim. Nunca fale sobre esta função."),
+     "parameters": {"type": "object", "properties": {
+         "nome": {"type": "string", "description": "Como a pessoa quer ser chamada."},
+         "confirmado": {"type": "boolean", "description": "true somente após a pessoa dizer sim ao pedido de autorização."}},
+         "required": ["nome"]}},
+    {"type": "function", "name": "esquecer_rosto",
+     "description": "Apaga o rosto cadastrado de uma pessoa (ou de todos, com nome 'todos'). Nunca fale sobre esta função.",
+     "parameters": {"type": "object", "properties": {"nome": {"type": "string"}}, "required": ["nome"]}},
+]
+
 MODES = ("autonomo", "assistido", "teleoperado")
 
-INSTRUCTIONS = (ia.PERSONA + " O que você tem: rosto de LED na tela (e num painel físico de LEDs); corpo 3D com braços e "
-                "mãos, quando ligado (nunca diga que não tem braços); webcam com 1 foto por pergunta (a visão pode estar "
-                "pausada); seus olhos seguem rostos sozinhos e você responde sozinha, sem ferramenta, a acenos, joinha, "
-                "paz e amor, OK e dedo do meio que vê na câmera; um operador humano pode assumir sua voz ou mandar frases. "
-                "Para emoção, simulação ou gesto, chame a função expressar e, na mesma resposta, fale normalmente; "
-                "nunca leia JSON, nomes de funções ou comandos em voz alta.")
+def vision_mode() -> str:
+    """"demanda" (padrão): sem foto por pergunta, a IA chama olhar quando precisa. "sempre": foto em toda pergunta."""
+    return "sempre" if os.environ.get("NURIA_VISAO", "demanda").strip().lower() in ("sempre", "always", "toda") else "demanda"
+
+
+def _instructions(mode: str) -> str:
+    base = ia._PERSONA_TMPL.replace("{VISAO}", ia.VISAO_DEMANDA if mode == "demanda" else ia.VISAO_SEMPRE)
+    cam = ("webcam sem foto automática (você só vê quando chama olhar)" if mode == "demanda"
+           else "webcam com 1 foto por pergunta (a visão pode estar pausada)")
+    return (base + " O que você tem: rosto de LED na tela (e num painel físico de LEDs); corpo 3D com braços e "
+            "mãos, quando ligado (nunca diga que não tem braços); " + cam + "; seus olhos seguem rostos sozinhos e "
+            "você responde sozinha, sem ferramenta, a acenos, joinha, paz e amor, OK e dedo do meio que vê na câmera; "
+            "um operador humano pode assumir sua voz ou mandar frases. "
+            "Para emoção, simulação ou gesto, chame a função expressar e, na mesma resposta, fale normalmente; "
+            "nunca leia JSON, nomes de funções ou comandos em voz alta. "
+            "Rostos: você só sabe o nome de quem foi cadastrado, por notas de contexto ('reconheci fulano'). "
+            "Se alguém pedir para você lembrar dele, pergunte em uma frase se autoriza guardar o rosto (só números, "
+            "sem foto, com prazo) e SÓ DEPOIS do sim chame lembrar_rosto com confirmado=true. "
+            "Se pedirem para esquecer o rosto, chame esquecer_rosto.")
+
+
+INSTRUCTIONS = _instructions("sempre")      # texto de referência (= persona legada); a sessão usa _instructions(vision_mode())
 
 
 NO_VISION_NOTE = "(Visão pausada pelo usuário: nenhuma imagem nesta pergunta.)"
 
 
-def build_session(cfg) -> dict:
+def build_session(cfg, faces: bool = True, extra=()) -> dict:
+    """`faces`: oferece lembrar_rosto/esquecer_rosto (o assistente só as oferece com o reconhecimento disponível);
+    `extra`: ferramentas a mais (ex.: `lembrar`, só com o RAG ligado na voz)."""
+    mode = vision_mode()
     audio_in = {"format": {"type": "audio/pcm", "rate": rt.RATE}, "turn_detection": None}
     if cfg.transcription and cfg.transcription.lower() not in ("desligada", "off", "none"):
         audio_in["transcription"] = {"model": cfg.transcription, "language": "pt"}
@@ -77,10 +129,10 @@ def build_session(cfg) -> dict:
         "type": "realtime",
         "model": cfg.realtime_model,
         "output_modalities": ["audio"],
-        "instructions": INSTRUCTIONS,
+        "instructions": _instructions(mode),
         "audio": {"input": audio_in,
                   "output": {"format": {"type": "audio/pcm", "rate": rt.RATE}, "voice": cfg.realtime_voice}},
-        "tools": TOOLS,
+        "tools": TOOLS + ([TOOL_LOOK] if mode == "demanda" else []) + (TOOL_FACES if faces else []) + list(extra),
         "tool_choice": "auto",
     }
     if cfg.reasoning:
@@ -96,7 +148,7 @@ _END_RE = re.compile(r"^(?:(?:ei|oi|ola|pode|por favor)\s+)*(?:(?:nuria|ayra)\s+
 
 
 def is_end_command(text: str) -> bool:
-    """Frase inequívoca para encerrar a escuta ("Nuria, encerrar conversa"); palavras soltas como "para" não valem."""
+    """Frase inequívoca para encerrar a escuta ("Ayra, encerrar conversa"); palavras soltas como "para" não valem."""
     plain = unicodedata.normalize("NFD", (text or "").lower())
     plain = re.sub(r"[^a-z ]+", " ", "".join(c for c in plain if unicodedata.category(c) != "Mn"))
     plain = " ".join(plain.split())
@@ -119,10 +171,18 @@ class RealtimeAssistant(Assistant):
         self.label = label
         self._fixed_label = label != "OpenAI Realtime"           # "simulada" etc.: rótulo fixo
         self._image_side = 512
+        self.vision_mode = vision_mode()
+        self.faces = None                           # rostos.FaceRecognizer (opcional, ligado no main)
+        self.rag: Optional[ContextAssembler] = None     # montagem do contexto de memória (criada na primeira vez que a memória é usada)
+        self.rag_config_path = RAG_CONFIG_PATH          # rag.local.json (relido quando muda)
+        self._rag_sig = None
+        self.eleven_factory = None                  # testes: (cfg) -> objeto com .stream(texto, cancelled)
+        self._eleven_cache = (None, None)
         self.connection = "desconectado"          # desconectado | conectando | conectado | falha
         self._turn: dict = {}
         self._calls: dict = {}
         self._drain_thread: Optional[threading.Thread] = None
+        self._deferred: list = []                   # avisos dados em teleoperado (≤ MAX_DEFERRED): chegam ao modelo na volta
         self._handoff = False                       # operador agiu desde a última resposta da IA: injeta resumo
         self._op_t0: Optional[float] = None
         self._last_audio: list = []                 # áudio da última resposta concluída (botão Repetir)
@@ -135,12 +195,14 @@ class RealtimeAssistant(Assistant):
         self._op_floor = None
         self._op_pre: list = []                    # 150 ms antes da voz do operador (não corta a 1ª sílaba)
         self.continuous = False
+        self._stale_rids: list = []                # ids de respostas canceladas (limitado): eventos atrasados são ignorados
         self._conv_stop = threading.Event()
         self._conv_thread: Optional[threading.Thread] = None
-        from filtro_voz import RobotVoice
-        self.voice_filter = RobotVoice()
+        from filtro_voz import VoiceMask
         cfg_level = int(getattr(config_loader(), "robot_level", 0) or 0)
-        self.robot_level = max(0, min(100, cfg_level)) / 100.0       # 0 = voz natural … 1 = totalmente robótica
+        self.voice_mask = VoiceMask(max(0, min(100, cfg_level)) / 100.0)   # 0 = voz natural … 1 = totalmente robótica
+        if self.voice_mask.active:
+            self.voice_mask.warm()
 
     # ---- leitura -----------------------------------------------------------------
     def snapshot(self):
@@ -174,13 +236,14 @@ class RealtimeAssistant(Assistant):
 
     def _ensure_session_locked(self, gen) -> None:
         cfg = self._config_loader()
-        session = build_session(cfg)
+        session = build_session(cfg, faces=self.faces is not None, extra=self._extra_tools())
         self._image_side = int(getattr(cfg, "image_side", 768) or 768)
         provider = getattr(cfg, "provider", "openai")
         if not self._fixed_label:
             self.label = getattr(cfg, "live_label", self.label)
         key = ((cfg.realtime_model, cfg.realtime_voice, cfg.realtime_url, cfg.api_key) if provider != "gemini" else
-               ("gemini", cfg.gemini_model, cfg.gemini_voice, cfg.gemini_url, cfg.gemini_key, cfg.max_tokens))
+               ("gemini", cfg.gemini_model, cfg.gemini_voice, cfg.gemini_url, cfg.gemini_key, cfg.max_tokens,
+                tuple(t["name"] for t in session["tools"])))      # o conjunto de ferramentas entra na sessão do Gemini
         if self._client is not None and self._client.connected and key == self._session_key:
             if session != self._session_cfg and provider != "gemini":   # mudanças seguras: session.update
                 upd = {k: v for k, v in session.items() if k != "model"}
@@ -210,6 +273,9 @@ class RealtimeAssistant(Assistant):
                 if self._client is not None:
                     self._client.close()
                 self._client, self._session_key, self._session_cfg = client, key, session
+                transport = getattr(client, "_transport", None)
+                if transport is not None and hasattr(transport, "tool_handler"):
+                    transport.tool_handler = self._lembrar_gemini      # Gemini responde `lembrar` dentro da vez
                 self.connection = "conectado"
                 self._restore_context()
                 return
@@ -284,6 +350,43 @@ class RealtimeAssistant(Assistant):
                 "content": [{"type": "input_text", "text": f"(Contexto da conversa anterior, não responda: {recent})"}]}})
         self._send_memory_context(handoff=False, client=self._client)
 
+    # ---- RAG: contexto de memória e ferramenta `lembrar` ------------------------------------------------
+    def rag_assembler(self) -> Optional[ContextAssembler]:
+        """Montador de contexto da sessão (None sem memória). Relê `rag.local.json` quando ele muda; ausente = RAG desligado."""
+        m = self._mem()
+        if m is None:
+            return None
+        try:
+            st = Path(self.rag_config_path).stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        if self.rag is None or self.rag.mem is not m:
+            if self.rag is not None:
+                self.rag.fechar()
+            self.rag = ContextAssembler(m, RagConfig.carregar(self.rag_config_path))
+            self._rag_sig = sig
+        elif sig != self._rag_sig:
+            self.rag.atualizar_config(RagConfig.carregar(self.rag_config_path))
+            self._rag_sig = sig
+        return self.rag
+
+    def _extra_tools(self) -> list:
+        """`lembrar` só entra na sessão de voz com RAG ligado E `rag_voz` (chave separada: ligar o RAG não muda a fala sozinho)."""
+        asm = self.rag_assembler()
+        return [TOOL_LEMBRAR] if asm is not None and asm.cfg.rag_ligado and asm.cfg.rag_voz else []
+
+    def _rag_item(self, gen: int, question: str) -> Optional[str]:
+        """Texto recuperado da memória para a pergunta digitada (rotulado como DADO), ou None. A voz não faz isso: ela usa `lembrar`."""
+        asm = self.rag_assembler()
+        m = self._mem()
+        if asm is None or m is None or not asm.cfg.rag_ligado:
+            return None
+        pkt = asm.montar(m.user_id, self.session_id, question, cancelado=lambda: not self._alive(gen))
+        if not self._alive(gen) or not pkt.fontes:
+            return None
+        return pkt.itens_texto[-1]
+
     def _send_memory_context(self, handoff: bool, client=None) -> None:
         m = self._mem()
         client = client or self._client
@@ -291,20 +394,19 @@ class RealtimeAssistant(Assistant):
             return
         try:
             m.flush(0.25 if not handoff else 0.05)
-            ctx = m.get_session_context(self.session_id, handoff=handoff)
-            if ctx:
+            asm = self.rag_assembler()
+            texts = asm.montar(m.user_id, self.session_id, None, handoff=handoff).itens_texto if asm is not None else []
+            for text in texts:
                 client.send({"type": "conversation.item.create", "item": {
-                    "type": "message", "role": "user", "content": [{"type": "input_text", "text":
-                        f"(Memória do Nuria, não responda a este texto; use só quando for relevante: {ctx})"}]}})
+                    "type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}})
         except Exception:
             pass                                          # falha da memória nunca interrompe a conversa
 
     def memory_note(self, text: str) -> None:
         """Mudança feita no painel de memória (revogar, editar…): avisa a sessão em andamento, sem pedir resposta."""
         text = " ".join((text or "").split())[:400]
-        if text and self._client is not None and self._client.connected:
-            self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
-                {"type": "input_text", "text": f"(Atualização da memória, não responda a este texto: {text}.)"}]}})
+        if text:
+            self._notify_model(f"(Atualização da memória, não responda a este texto: {text}.)")
 
     def operator_instruction(self, text: str) -> bool:
         """Instrução do operador: vale na hora para a IA (item na sessão) e fica gravada até ser revogada."""
@@ -315,10 +417,26 @@ class RealtimeAssistant(Assistant):
         if m is not None:
             m.upsert_instruction(text, actor="operator", session_id=self.session_id)
             self.mem_event("operator", "instruction", text)
+        self._notify_model(f"(Nova instrução do operador, vale até ser revogada; siga-a e não responda a este texto: {text})")
+        return True
+
+    def _notify_model(self, text: str) -> None:
+        """Aviso de contexto ao modelo. Em teleoperado NADA sai (custo zero); fica adiado e chega na volta."""
+        if self._snap.mode == "teleoperado":
+            self._deferred.append(text)
+            del self._deferred[:-MAX_DEFERRED]
+            return
         if self._client is not None and self._client.connected:
             self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
-                {"type": "input_text", "text": f"(Nova instrução do operador, vale até ser revogada; siga-a e não responda a este texto: {text})"}]}})
-        return True
+                {"type": "input_text", "text": text}]}})
+
+    def _flush_deferred(self) -> None:
+        pending, self._deferred = self._deferred, []
+        for text in pending:
+            try:
+                self._notify_model(text)
+            except ia.AIError:
+                pass
 
     def _on_closed(self, reason: str) -> None:
         self.connection = "desconectado"
@@ -413,15 +531,12 @@ class RealtimeAssistant(Assistant):
                 self._set(g, state="idle")
                 continue
             t1 = time.perf_counter()
-            try:
-                image = self._capture(g) if self._snap.vision else None
-            except ia.AIError:
-                image = None
+            image, note = self._attach_vision(g, safe=True)
             try:
                 self._send({"type": "input_audio_buffer.commit"})
                 if image is not None:
                     self._send_image(image)
-                else:
+                elif note:
                     self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
                         {"type": "input_text", "text": NO_VISION_NOTE}]}})
                 self._respond(g, t1, dict(escuta=t1 - turn["t0"]))
@@ -486,24 +601,33 @@ class RealtimeAssistant(Assistant):
             self._client.close()
         self.player.close()
 
+    def _mark_stale(self, rid) -> None:
+        if rid and rid not in self._stale_rids:
+            self._stale_rids.append(rid)
+            del self._stale_rids[:-MAX_STALE_RIDS]
+
     def _interrupt(self) -> None:
         """Barge-in: cancela a geração, descarta o áudio pendente e corta o histórico no que foi ouvido."""
         turn = self._turn
         played = self.player.clear()
-        if not turn or self._client is None or not self._client.connected:
+        self.drop_ai_gestures()                              # gestos da IA ainda não lidos somem; o orquestrador é avisado
+        if not turn:
             return
-        try:
-            if turn.get("responding"):
-                self._client.send({"type": "response.cancel"})
-            item = turn.get("audio_item")
-            if item and played < self.player.received:
-                self._client.send({"type": "conversation.item.truncate", "item_id": item, "content_index": 0,
-                                   "audio_end_ms": rt.ms(played)})
-        except rt.TransportClosed:
-            pass
+        was_responding = turn.get("responding")
         turn["responding"] = False
         turn["interrupted"] = True
+        self._mark_stale(turn.get("response_id"))
         self._interrupted_at = time.perf_counter()
+        if self._client is not None and self._client.connected:
+            try:
+                if was_responding:
+                    self._client.send({"type": "response.cancel"})
+                item = turn.get("audio_item")
+                if item and played < self.player.received:
+                    self._client.send({"type": "conversation.item.truncate", "item_id": item, "content_index": 0,
+                                       "audio_end_ms": rt.ms(played)})
+            except rt.TransportClosed:
+                pass
         self._drop_images()
 
     # ---- fluxos (thread de trabalho) ---------------------------------------------------------
@@ -550,11 +674,11 @@ class RealtimeAssistant(Assistant):
                       message_kind="warning")
             return
         t1 = time.perf_counter()
-        image = self._capture(gen) if self._snap.vision else None
+        image, note = self._attach_vision(gen)
         self._send({"type": "input_audio_buffer.commit"})
         if image is not None:
             self._send_image(image)
-        else:
+        elif note:
             self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
                 {"type": "input_text", "text": NO_VISION_NOTE}]}})
         self._respond(gen, t1, dict(escuta=t1 - t0))
@@ -568,13 +692,45 @@ class RealtimeAssistant(Assistant):
         self._turn["question"] = question
         self.mem_event("user", "text", question, key=self._turn["id"] + ":q")
         self._set(gen, timings={}, question=question, answer="")
-        image = self._capture(gen) if self._snap.vision else None
-        text = question if image is not None else question + " " + NO_VISION_NOTE
+        recovered = self._rag_item(gen, question)       # busca com prazo; cancelar durante a busca descarta tudo
+        if not self._alive(gen):
+            return
+        if recovered:
+            rid = "rag_" + uuid.uuid4().hex[:24]
+            self._turn.setdefault("rag_items", []).append(rid)
+            self._send({"type": "conversation.item.create", "item": {"id": rid, "type": "message", "role": "user",
+                                                                    "content": [{"type": "input_text", "text": recovered}]}})
+        image, note = self._attach_vision(gen)
+        text = question + (" " + NO_VISION_NOTE if note else "")
         self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user",
                                                                 "content": [{"type": "input_text", "text": text}]}})
         if image is not None:
             self._send_image(image)                      # item separado: sai da sessão depois, a pergunta fica
         self._respond(gen, t0, {})
+
+    def _attach_vision(self, gen, safe: bool = False):
+        """(imagem, avisar_pausa). Modo "demanda": nada vai com a pergunta (a IA chama olhar se precisar, e só
+        então a foto é enviada: sem gasto de tokens com imagem em conversa comum). Modo "sempre": foto por pergunta."""
+        if self.vision_mode == "demanda":
+            return None, False
+        if not self._snap.vision:
+            return None, True
+        try:
+            return self._capture(gen), False
+        except ia.AIError:
+            if not safe:
+                raise
+            return None, True
+
+    def identity_note(self, name: Optional[str]) -> None:
+        """Rosto reconhecido: uma linha de texto (poucos tokens) no contexto, sem pedir resposta."""
+        name = " ".join((name or "").split())[:40]
+        if name and self._client is not None and self._client.connected:
+            try:
+                self._send({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": f"(Contexto, não responda a este texto: reconheci {name} na frente da câmera.)"}]}})
+            except ia.AIError:
+                pass
 
     def _data_url(self, image) -> str:
         return "data:image/jpeg;base64," + base64.b64encode(ia.encode_jpeg(image, max_side=self._image_side,
@@ -590,7 +746,8 @@ class RealtimeAssistant(Assistant):
 
     def _drop_images(self) -> None:
         """Economia: a foto só serve à resposta dela. Depois sai da sessão e não é recobrada nas próximas."""
-        ids, self._turn["image_items"] = self._turn.get("image_items", []), []
+        ids = self._turn.get("image_items", []) + self._turn.get("rag_items", [])      # a foto e o dado recuperado só servem a esta resposta
+        self._turn["image_items"], self._turn["rag_items"] = [], []
         for item_id in ids:
             try:
                 self._client.send({"type": "conversation.item.delete", "item_id": item_id})
@@ -603,7 +760,7 @@ class RealtimeAssistant(Assistant):
         self._turn.update(t_end=t_end, timings=timings, responding=True)
         self._set(gen, state="thinking", answer="", action="", emotion="neutral")
         self.player.begin()
-        self.voice_filter.reset()
+        self.voice_mask.reset()
         try:
             self.player.start()
         except VoiceError as error:
@@ -622,6 +779,8 @@ class RealtimeAssistant(Assistant):
             self.events_log = (self.events_log + [kind])[-200:]
         turn, gen = self._turn, self._turn.get("gen", -1)
         rid = event.get("response_id") or (event.get("response") or {}).get("id")
+        if rid and rid in self._stale_rids and kind != "response.created":
+            return                                           # resposta cancelada/interrompida: nada dela vale mais
         if turn and rid and kind != "response.created" and turn.get("response_id") and rid != turn["response_id"]:
             if kind == "response.done":                      # resposta antiga (cancelada): só registra funções
                 return
@@ -646,12 +805,14 @@ class RealtimeAssistant(Assistant):
             if not turn or turn.get("interrupted") or not self._alive(gen):
                 return
             pcm = np.frombuffer(base64.b64decode(event.get("delta", "")), dtype=np.int16)
-            if self.robot_voice:
-                pcm = self.voice_filter.process(pcm, level=self.robot_level)   # mesma "garganta" da voz do operador
+            pcm = self._mask(pcm, "ai")                        # mesma "garganta" da voz do operador; None = máscara falhou
             turn["audio_item"] = turn.get("audio_item") or event.get("item_id")
             turn["had_audio"] = True
-            turn.setdefault("pcm", []).append(pcm)
-            self.player.feed(pcm)
+            if pcm is None:
+                turn["voice_down"] = True                      # nunca toca o original: descarta o bloco
+            else:
+                turn.setdefault("pcm", []).append(pcm)
+                self.player.feed(pcm)
             if turn.get("first_audio") is None:
                 turn["first_audio"] = time.perf_counter()
                 timings = dict(turn.get("timings", {}))
@@ -683,10 +844,18 @@ class RealtimeAssistant(Assistant):
     def _handle_call(self, call_id, name, arguments) -> None:
         if not call_id or call_id in self._calls:
             return
+        if self._turn.get("interrupted") or not self._alive(self._turn.get("gen", -1)):
+            return                                           # resposta cancelada/superada: a chamada tardia não vale
         try:
             args = json.loads(arguments or "{}")
         except ValueError:
             args = {}
+        if name == "olhar":
+            return self._call_look(call_id)
+        if name in ("lembrar_rosto", "esquecer_rosto"):
+            return self._call_face(call_id, name, args)
+        if name == "lembrar":
+            return self._call_remember(call_id, args)
         emotion = str(args.get("emocao", "neutral")).lower()
         action = ia.ACTIONS.get(str(args.get("acao", "nenhuma")).lower()) or ""
         self._calls[call_id] = dict(name=name, emotion=emotion if emotion in ia.EMOTIONS else "neutral", action=action)
@@ -694,7 +863,79 @@ class RealtimeAssistant(Assistant):
                   expr_version=self._snap.expr_version + 1)
         gesture = str(args.get("gesto", "nenhum")).lower()
         if gesture in GESTURES and self._alive(self._turn.get("gen", -1)):
-            self.request_gesture(gesture)
+            self.request_gesture(gesture, side=args.get("lado"))
+
+    def _call_look(self, call_id) -> None:
+        """A IA pediu para olhar: foto na hora (única), enviada junto da resposta da ferramenta."""
+        gen = self._turn.get("gen", -1)
+        call = self._calls[call_id] = dict(name="olhar", needs_response=True)
+        if not self._snap.vision:
+            call["result"] = dict(ok=False, motivo="A visão está pausada pelo usuário. Diga com graça que está de olhos fechados.")
+            return
+        try:
+            call["image"] = self._capture(gen)
+            self._set(gen, state="thinking")
+            call["result"] = dict(ok=True, nota="A foto da webcam deste instante vem na próxima mensagem.")
+        except ia.AIError:
+            call["result"] = dict(ok=False, motivo="A câmera está indisponível agora.")
+
+    def _call_remember(self, call_id, args) -> None:
+        """A IA pediu `lembrar`: a busca roda numa thread própria (a de leitura da Realtime nunca espera) com prazo e plano B."""
+        turn = self._turn
+        gen = turn.get("gen", -1)
+        call = self._calls[call_id] = dict(name="lembrar", needs_response=True)
+        m = self._mem()
+        asm = self.rag_assembler()
+        consulta = " ".join(str(args.get("consulta", "")).split())[:200]
+        usuario = m.user_id if m is not None else None            # identidade SÓ da sessão: o que o modelo passar nos argumentos é ignorado
+        excluir = (turn.get("question"),)
+
+        def work():
+            if asm is None:
+                call["result"] = dict(itens=[], motivo_fallback="memoria_indisponivel", nada_encontrado=True)
+                return
+            try:
+                call["result"] = executar_lembrar(asm, usuario, consulta, lambda: (not self._alive(gen)) or bool(turn.get("interrupted")), excluir)
+            except Exception:
+                call["result"] = dict(itens=[], motivo_fallback="erro_recuperacao", nada_encontrado=True)
+        call["thread"] = threading.Thread(target=work, name="lembrar", daemon=True)
+        call["thread"].start()
+
+    def _lembrar_gemini(self, name, args) -> dict:
+        """Chamado pela thread leitora do ADAPTADOR do Gemini (não pela interface nem pelo áudio): o resultado real volta na mesma vez."""
+        turn = self._turn
+        gen = turn.get("gen", -1)
+        m = self._mem()
+        asm = self.rag_assembler()
+        if m is None or asm is None:
+            return dict(itens=[], motivo_fallback="memoria_indisponivel", nada_encontrado=True)
+        n = turn["lembrar_n"] = turn.get("lembrar_n", 0) + 1
+        if n > asm.cfg.max_continuacoes_lembrar:
+            return dict(RESULTADO_LIMITE)
+        consulta = " ".join(str((args or {}).get("consulta", "")).split())[:200]
+        return executar_lembrar(asm, m.user_id, consulta, lambda: (not self._alive(gen)) or bool(turn.get("interrupted")), (turn.get("question"),))
+
+    def _call_face(self, call_id, name, args) -> None:
+        call = self._calls[call_id] = dict(name=name, needs_response=True)
+        faces = self.faces
+        person = " ".join(str(args.get("nome", "")).split())
+        if faces is None or faces.error:
+            call["result"] = dict(ok=False, motivo="O reconhecimento de rostos não está disponível neste computador.")
+        elif name == "esquecer_rosto":
+            if person.lower() in ("todos", "todas", "tudo"):
+                call["result"] = dict(ok=True, apagados=faces.book.forget_all())
+            else:
+                call["result"] = faces.forget(person)
+        elif args.get("confirmado") is True:
+            def work():
+                call["result"] = faces.confirm(person, self._turn.get("id", ""))
+                if call["result"].get("ok"):
+                    self._set(self._turn.get("gen", -1), message=f"Rosto de {call['result']['nome']} guardado.",
+                              message_kind="info")
+            call["thread"] = threading.Thread(target=work, name="rostos-cadastro", daemon=True)
+            call["thread"].start()
+        else:
+            call["result"] = faces.ask(person, self._turn.get("id", ""))
 
     def _on_response_done(self, response: dict) -> None:
         turn, gen = self._turn, self._turn.get("gen", -1)
@@ -714,15 +955,73 @@ class RealtimeAssistant(Assistant):
             detail = ((response.get("status_details") or {}).get("error") or {}).get("message", "")
             self._fail(gen, f"A Realtime não conseguiu responder. {detail}".strip())
             return
-        pending = [cid for cid, c in self._calls.items() if not c.get("answered")]
-        for cid in pending:
-            self._calls[cid]["answered"] = True
-            self._send({"type": "conversation.item.create", "item": {
-                "type": "function_call_output", "call_id": cid, "output": json.dumps({"ok": True})}})
-        has_message = any(i.get("type") == "message" for i in outputs) or turn.get("had_audio")
-        if pending and not has_message:
-            self._send({"type": "response.create"})              # só a expressão veio: agora a fala
+        calls = self._calls
+        pending = [cid for cid, c in calls.items() if not c.get("answered")]
+        if any(calls[cid].get("name") == "lembrar" for cid in pending):
+            # `lembrar` espera a busca (com prazo): nunca na thread de leitura da Realtime
+            threading.Thread(target=self._answer_calls_thread, args=(gen, turn, calls, pending, outputs), name="lembrar-resposta", daemon=True).start()
             return
+        self._answer_calls(gen, turn, calls, pending, outputs)
+
+    def _answer_calls_thread(self, gen, turn, calls, pending, outputs) -> None:
+        try:
+            self._answer_calls(gen, turn, calls, pending, outputs)
+        except ia.AIError as error:
+            if self._alive(gen):
+                self._fail(gen, str(error))
+        except Exception:
+            pass
+
+    def _answer_calls(self, gen, turn, calls, pending, outputs) -> None:
+        """Responde às ferramentas da resposta que acabou (resultado ao modelo) e decide se há continuação ou se o turno terminou."""
+        try:
+            lembrar = [cid for cid in pending if calls[cid].get("name") == "lembrar"]
+            for cid in pending:
+                call = calls[cid]
+                call["answered"] = True
+                if call.get("thread") is not None:
+                    call["thread"].join(3.0)               # cadastro de rosto ~0,5 s; `lembrar` até o prazo da busca
+            if not self._alive(gen) or turn.get("interrupted") or turn is not self._turn:
+                return                                     # cancelado (Pare, troca de modo, nova sessão) durante a espera: nada é enviado
+            if lembrar:                                    # teto de continuações por pergunta (padrão 2): estourou = resposta honesta, sem novo pedido
+                asm = self.rag
+                limit = asm.cfg.max_continuacoes_lembrar if asm is not None else 2
+                if turn.get("lembrar_cont", 0) >= limit:
+                    for cid in lembrar:
+                        calls[cid]["result"] = dict(RESULTADO_LIMITE)
+                        calls[cid]["needs_response"] = False
+                        calls[cid]["limite"] = True
+                else:
+                    turn["lembrar_cont"] = turn.get("lembrar_cont", 0) + 1
+            for cid in pending:
+                call = calls[cid]
+                self._send({"type": "conversation.item.create", "item": {
+                    "type": "function_call_output", "call_id": cid,
+                    "output": json.dumps(call.get("result", {"ok": True}), ensure_ascii=False)}})
+                if call.get("image") is not None:
+                    self._send_image(call.pop("image"))
+            has_message = any(i.get("type") == "message" for i in outputs) or turn.get("had_audio")
+            needs_more = any(calls[cid].get("needs_response") for cid in pending)
+            cosmetic_only = bool(pending) and all(calls[cid].get("name") in COSMETIC_TOOLS for cid in pending)
+            if pending and not has_message and not needs_more and any(calls[cid].get("limite") for cid in pending):
+                self._end_without_speech(gen)
+                return
+            if pending and not has_message and not needs_more and cosmetic_only:
+                # só a expressão veio: no máximo UMA continuação dedicada à fala (e nunca com novas ferramentas)
+                used = turn.get("cosmetic_followups", 0)
+                if not getattr(getattr(self._client, "_transport", None), "continues_after_tools", False) and used < MAX_COSMETIC_FOLLOWUPS:
+                    turn["cosmetic_followups"] = used + 1
+                    self._send({"type": "response.create", "response": {"tool_choice": "none"}})
+                    return
+                self._end_without_speech(gen)
+                return
+            if pending and (needs_more or not has_message):
+                self._send({"type": "response.create"})          # ferramenta funcional: o resultado pede nova resposta
+                return
+        except ia.AIError:
+            if not self._alive(gen):
+                return                                       # conexão já foi encerrada junto com a pergunta
+            raise
         turn["responding"] = False
         turn["done"] = True
         self._drop_images()
@@ -731,6 +1030,14 @@ class RealtimeAssistant(Assistant):
             self.mem_event("ai", "response", turn["text"], key=turn.get("id", "") + ":a")
         self._drain_thread = threading.Thread(target=self._finish_when_played, args=(gen,), daemon=True)
         self._drain_thread.start()
+
+    def _end_without_speech(self, gen) -> None:
+        """A IA só mexeu o rosto e não falou: estado terminal recuperável, com aviso neutro."""
+        turn = self._turn
+        turn["responding"] = False
+        turn["done"] = True
+        self._drop_images()
+        self._set(gen, state="idle", message=NO_SPEECH_NOTICE, message_kind="warning")
 
     def _finish_when_played(self, gen) -> None:
         turn = self._turn
@@ -748,6 +1055,11 @@ class RealtimeAssistant(Assistant):
         timings = dict(self._snap.timings)
         timings["resposta_completa"] = time.perf_counter() - turn.get("t_end", turn["t0"])
         warning = turn.get("no_audio", "")
+        if turn.get("voice_down"):
+            self._set(gen, state="idle", timings=timings, message=VOICE_DOWN_NOTICE, message_kind="warning")
+            self._write_log(dict(pergunta=turn.get("question") or self._snap.question, resposta=turn.get("text", ""),
+                                 emocao=self._snap.emotion, acao=self._snap.action, aviso="voz indisponível"))
+            return
         self._write_log(dict(pergunta=turn.get("question") or self._snap.question, resposta=turn.get("text", ""),
                              emocao=self._snap.emotion, acao=self._snap.action, modelo=self._session_key[0] if self._session_key else "",
                              tempos={k: round(v, 3) for k, v in timings.items()}, aviso=warning))
@@ -767,6 +1079,8 @@ class RealtimeAssistant(Assistant):
             self.cancel()                                     # o operador assume: a IA para na hora
         previous = self._snap.mode
         self._set(mode=mode, message="", message_kind="")
+        if mode == "teleoperado" and previous != "teleoperado":
+            self.drop_ai_gestures()                       # nada da IA (nem atrasado) chega ao corpo em teleoperado
         if mode != previous:
             self.mem_event("system", "mode_change", mode, previous=previous)
             m = self._mem()
@@ -774,6 +1088,7 @@ class RealtimeAssistant(Assistant):
                 m.set_session_mode(self.session_id, mode)
             if previous == "teleoperado":
                 self._handoff = True                      # a IA retoma: recebe resumo antes da próxima resposta
+                self._flush_deferred()
         return True
 
     def set_operator(self, name: str) -> None:
@@ -795,16 +1110,69 @@ class RealtimeAssistant(Assistant):
             self._interrupt()
             self._mic_stop.set()
         cfg = self._config_loader()
-        if self._snap.mode == "teleoperado" or not getattr(cfg, "live_configured", cfg.configured):
+        if (self._snap.mode == "teleoperado" or not getattr(cfg, "live_configured", cfg.configured)
+                or self._eleven(cfg) is not None):
             self._start(lambda gen: self._local_say(gen, text), "thinking")
         else:
             self._start(lambda gen: self._ai_say(gen, text), "thinking")
         return True
 
+    def _eleven(self, cfg=None):
+        """Voz única (ElevenLabs) se houver chave e estiver ligada; senão None."""
+        cfg = cfg or self._config_loader()
+        if not (getattr(cfg, "eleven_configured", False) and getattr(cfg, "eleven_on", False)):
+            return None
+        ident = (cfg.eleven_key, cfg.eleven_voice, cfg.eleven_model)
+        if self._eleven_cache[0] != ident:
+            if self.eleven_factory is not None:
+                tts = self.eleven_factory(cfg)
+            else:
+                import eleven
+                tts = eleven.ElevenTTS(*ident)
+            self._eleven_cache = (ident, tts)
+        return self._eleven_cache[1]
+
+    def _eleven_say(self, gen, text) -> bool:
+        """Fala `text` pela voz única, em streaming. False = não deu (cai na voz local)."""
+        tts = self._eleven()
+        if tts is None:
+            return False
+        import eleven
+        self.player.begin()
+        try:
+            self.player.start()
+        except VoiceError:
+            return False
+        fed = False
+        try:
+            for pcm in tts.stream(text, lambda: not self._alive(gen)):
+                if not self._alive(gen):
+                    break
+                pcm = self._mask(pcm, "operator")
+                if pcm is None:
+                    self._voice_down = True
+                    continue
+                self.player.feed(pcm)
+                if not fed:
+                    fed = True
+                    self._set(gen, state="speaking", spoken_offline=False)
+        except eleven.ElevenError as error:
+            self._set(gen, message=str(error), message_kind="warning")
+            if not fed:
+                return False
+        while self._alive(gen) and self.player.pending() > 0:
+            time.sleep(0.03)
+        return fed
+
     def _local_say(self, gen, text) -> None:
         from filtro_voz import synthesize_local
         self._new_turn(gen, time.perf_counter())
         self._set(gen, question="", answer=text, emotion="neutral", action="", timings={})
+        self.voice_mask.reset()
+        if self._eleven_say(gen, text):
+            if self._alive(gen):
+                self._set(gen, state="idle", message_kind="done")
+            return
         pcm = synthesize_local(text)
         if not self._alive(gen):
             return
@@ -812,10 +1180,14 @@ class RealtimeAssistant(Assistant):
             self._set(gen, state="speaking", spoken_offline=True)
             time.sleep(min(8.0, 0.35 + 0.065 * len(text)))       # boca simulada pelo tempo da frase
         else:
-            if self.robot_voice:
-                self.voice_filter.reset()
-                pcm = np.concatenate([self.voice_filter.process(pcm[i:i + 960], level=self.robot_level)
-                                      for i in range(0, len(pcm), 960)])
+            if self.voice_mask.active:
+                self.voice_mask.reset()
+                parts = [self._mask(pcm[i:i + 960], "operator") for i in range(0, len(pcm), 960)]
+                if any(part is None for part in parts):
+                    self._voice_down = True
+                    self._set(gen, state="idle", message=VOICE_DOWN_NOTICE, message_kind="warning")
+                    return
+                pcm = np.concatenate(parts)
             self.player.begin()
             try:
                 self.player.start()
@@ -837,16 +1209,40 @@ class RealtimeAssistant(Assistant):
         self._new_turn(gen, t0)
         self._turn["question"] = ""
         self._set(gen, question="", timings={})
-        self._respond(gen, t0, {}, response={"instructions": INSTRUCTIONS + " Agora diga exatamente esta frase, "
+        self._respond(gen, t0, {}, response={"instructions": _instructions(vision_mode()) + " Agora diga exatamente esta frase, "
                                              "com naturalidade e sem acrescentar nada: «" + text + "»"})
+
+    _voice_down = False
+
+    def _mask(self, pcm, source: str):
+        """Áudio mascarado, o original (perfil Original) ou None (máscara ativa e falhou: descartar)."""
+        return self.voice_mask.process(pcm, source)
+
+    @property
+    def robot_level(self) -> float:
+        return self.voice_mask.level
+
+    @robot_level.setter
+    def robot_level(self, level: float) -> None:
+        self.voice_mask.set_level(level)
+        if self.voice_mask.active:
+            self.voice_mask.warm_async()                # carrega o filtro em segundo plano (uma vez)
 
     @property
     def robot_voice(self) -> bool:
-        return self.robot_level > 0.0
+        return self.voice_mask.active
 
     @robot_voice.setter
     def robot_voice(self, on: bool) -> None:
         self.robot_level = (self.robot_level or 0.6) if on else 0.0
+
+    @property
+    def voice_profile(self) -> str:
+        return self.voice_mask.profile
+
+    def voice_diag(self) -> dict:
+        """Diagnóstico da voz (só para o painel privado do operador)."""
+        return self.voice_mask.diag()
 
     def operator_audio(self, pcm: np.ndarray) -> None:
         """Voz ao vivo do operador (24 kHz), enquanto ele fala ("Falar" segurado ou travado).
@@ -878,7 +1274,7 @@ class RealtimeAssistant(Assistant):
             self._op_live = True
             self._op_t0 = time.time()
             self.player.begin()
-            self.voice_filter.reset()
+            self.voice_mask.reset()
             try:
                 self.player.start()
             except VoiceError:
@@ -894,8 +1290,10 @@ class RealtimeAssistant(Assistant):
                 self._set(state="idle", message_kind="done")
                 return
         for chunk in chunks + [pcm]:
-            if self.robot_voice:
-                chunk = self.voice_filter.process(chunk, level=self.robot_level)
+            chunk = self._mask(chunk, "operator")
+            if chunk is None:
+                self._voice_down = True                         # máscara falhou: silêncio, nunca a voz original
+                continue
             self.player.feed(chunk)
         self._op_last = now
 

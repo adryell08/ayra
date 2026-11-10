@@ -25,7 +25,7 @@ teleoperado também passa pelo filtro, então o teleoperado não gasta a API.
    e o **PIN** de 6 dígitos. Na primeira vez, o Windows pergunta se libera o Python na rede: permita em **redes privadas**.
 2. No computador do operador (mesma rede), abra o endereço no Chrome/Edge. O certificado é do próprio robô: clique em
    **Avançado → Continuar** (o microfone do navegador só funciona em HTTPS).
-3. Digite o PIN. O robô mostra o selo vermelho **"Operador conectado · vendo e ouvindo"** enquanto houver operador (pode ser ocultado em **Ajustes → Conexões → Aviso na tela**).
+3. Digite o PIN. A tela do robô **não** mostra selo nem aviso de que há operador (IA e operador não se distinguem em frente ao robô); quem está conectado aparece só aqui e em **Ajustes → Conexões**.
 
 Na sala: vídeo (5 quadros/s; **clique na imagem para a Ayra olhar para lá**), áudio do ambiente, "Segure para falar"
 (ou barra de espaço), frase digitada, modos, 12 expressões/simulações, **13 gestos do corpo 3D** (tchau, joia, dedo do meio,

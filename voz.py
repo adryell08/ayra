@@ -7,6 +7,7 @@ Erros de dispositivo viram `VoiceError` com mensagem em pt-BR (RNF02).
 from __future__ import annotations
 
 import io
+import os
 from collections import deque
 import threading
 import time
@@ -163,8 +164,15 @@ class MicStream:
 
     RATE = 24000
 
-    def __init__(self, max_seconds: float = 20.0, silence_after: float = 0.8, no_speech_timeout: float = 7.0,
+    def __init__(self, max_seconds: float = 30.0, silence_after: Optional[float] = None, no_speech_timeout: float = 7.0,
                  hub=None):
+        # Fim de fala: 1,5 s de silêncio (pausa para pensar não fecha a mensagem). NURIA_FIM_FALA ajusta (0,6–4 s).
+        if silence_after is None:
+            try:
+                silence_after = float(os.environ.get("NURIA_FIM_FALA", "1.5").replace(",", "."))
+            except ValueError:
+                silence_after = 1.5
+            silence_after = min(4.0, max(0.6, silence_after))
         self.max_seconds, self.silence_after, self.no_speech_timeout = max_seconds, silence_after, no_speech_timeout
         self.level = 0.0
         self.capture_rate = self.RATE

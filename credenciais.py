@@ -28,6 +28,9 @@ DEFAULTS = {
     "NURIA_REALTIME_URL": "wss://api.openai.com/v1/realtime?model={model}",
     "NURIA_VOZ_ROBOTICA": "0",                          # grau do filtro robótico, 0–100 (%), na voz da IA e do operador
     # Provedor da conversa em tempo real: openai (Realtime) ou gemini (Gemini Live)
+    "NURIA_ELEVEN": "on",                               # voz única ElevenLabs (IA e operador) quando houver chave
+    "NURIA_ELEVEN_VOZ": "JBFqnCBsd6RMkjVDRZzb",         # id da voz (painel da ElevenLabs → Voices)
+    "NURIA_ELEVEN_MODELO": "eleven_flash_v2_5",
     "NURIA_PROVEDOR": "openai",
     "NURIA_MODELO_GEMINI": "gemini-3.8-live",
     "NURIA_VOZ_GEMINI": "Kore",
@@ -83,11 +86,19 @@ class AIConfig:
     max_tokens: int = 350                                # 0 = sem limite
     image_side: int = 512
     robot_level: int = 0                                 # grau da voz robótica, 0–100 (%)
+    eleven_key: Optional[str] = None
+    eleven_on: bool = True
+    eleven_voice: str = DEFAULTS["NURIA_ELEVEN_VOZ"]
+    eleven_model: str = DEFAULTS["NURIA_ELEVEN_MODELO"]
 
     @property
     def configured(self) -> bool:
         """Chave da OpenAI (Realtime e modo legado)."""
         return bool(self.api_key) and not self.api_key.startswith("sk-COLOQUE")
+
+    @property
+    def eleven_configured(self) -> bool:
+        return bool(self.eleven_key) and not self.eleven_key.startswith("COLOQUE")
 
     @property
     def gemini_configured(self) -> bool:
@@ -137,7 +148,10 @@ def load(path: Path = ENV_FILE, environ=None) -> AIConfig:
                     robot_percent(get("NURIA_VOZ_ROBOTICA")) > 0,
                     provider if provider in ("openai", "gemini") else "openai", gkey, get("NURIA_MODELO_GEMINI"),
                     get("NURIA_VOZ_GEMINI"), get("NURIA_GEMINI_URL"), integer("NURIA_MAX_TOKENS", 0, 4096),
-                    integer("NURIA_IMAGEM_LADO", 256, 1536), robot_level=robot_percent(get("NURIA_VOZ_ROBOTICA")))
+                    integer("NURIA_IMAGEM_LADO", 256, 1536), robot_level=robot_percent(get("NURIA_VOZ_ROBOTICA")),
+                    eleven_key=(env.get("ELEVENLABS_API_KEY") or env.get("ELEVEN_API_KEY") or "").strip() or None,
+                    eleven_on=get("NURIA_ELEVEN").strip().lower() not in ("off", "0", "nao", "não"),
+                    eleven_voice=get("NURIA_ELEVEN_VOZ").strip(), eleven_model=get("NURIA_ELEVEN_MODELO").strip())
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +188,8 @@ def mask(key: Optional[str]) -> str:
 def looks_valid(key: str, kind: str = "openai") -> bool:
     if any(c.isspace() for c in key):
         return False
+    if kind == "eleven":
+        return len(key) >= 20 and all(c.isalnum() or c in "_-" for c in key)      # sk_… (novas) ou 32 hex (antigas)
     if kind == "gemini":
         return key.startswith("AIza") and len(key) >= 30
     return key.startswith("sk-") and len(key) >= 20
@@ -207,7 +223,7 @@ def set_env_values(updates: Dict[str, Optional[str]], path: Path = ENV_FILE) -> 
 
 def key_source(environ=None, name: str = "OPENAI_API_KEY") -> str:
     """De onde vem a chave em uso: 'windows' (variável de ambiente, tem prioridade), 'env' ou ''."""
-    names = (name, "GOOGLE_API_KEY") if name == "GEMINI_API_KEY" else (name,)
+    names = {"GEMINI_API_KEY": (name, "GOOGLE_API_KEY"), "ELEVENLABS_API_KEY": (name, "ELEVEN_API_KEY")}.get(name, (name,))
     if any((os.environ if environ is None else environ).get(n) for n in names):
         return "windows"
     return "env" if any(read_env_file().get(n) for n in names) else ""

@@ -170,7 +170,8 @@ class FakeRealtimeServer:
         gesture = next((g for k, g in FAKE_GESTURES if k in q), None)
         if ("chor" in q or "brav" in q or gesture) and not already_called:
             args = json.dumps({"emocao": "sad" if "chor" in q else "angry" if "brav" in q else "happy",
-                               "acao": "chorar" if "chor" in q else "nenhuma", "gesto": gesture or "nenhum"})
+                               "acao": "chorar" if "chor" in q else "nenhuma", "gesto": gesture or "nenhum",
+                               **({"lado": "esquerdo"} if gesture and "esquerd" in q else {})})
             self._emit({"type": "response.output_item.added", "response_id": rid,
                         "item": {"id": cid, "type": "function_call", "name": "expressar", "call_id": cid}})
             self._emit({"type": "response.function_call_arguments.done", "response_id": rid, "item_id": cid,

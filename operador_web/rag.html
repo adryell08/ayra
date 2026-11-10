@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)">
+<title>Ayra · RAG</title>
+<style>
+  :root { --bg:#f2f2f7; --card:#fff; --text:#111216; --dim:#5b5e66; --line:#d9dadf; --blue:#0a6cff; --green:#1f9d48; --red:#e5363d; --orange:#c75400; --chip:#eceef2;
+          --radius:18px; --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.06); }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b0c0e; --card:#1c1c1e; --text:#f5f5f7; --dim:#b8b8c0; --line:#3a3a3f; --blue:#0a84ff; --green:#30d158;
+          --red:#ff453a; --orange:#ff9f0a; --chip:#2c2c2e; --shadow:none; } }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif; }
+  button,input { font:inherit; color:inherit; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 16px; flex-wrap:wrap; }
+  h1 { font-size:22px; margin:0; letter-spacing:-.02em; }
+  .pill { display:inline-flex; padding:6px 12px; border-radius:999px; background:var(--chip); font-weight:600; font-size:13px; text-decoration:none; color:inherit; }
+  main { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; padding:0 16px 24px; max-width:1100px; margin:0 auto; }
+  .card { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:0 0 10px; }
+  .kv { display:grid; grid-template-columns:1fr auto; gap:6px 12px; margin:0; } .kv dt { color:var(--dim); } .kv dd { margin:0; font-variant-numeric:tabular-nums; font-weight:600; text-align:right; }
+  .btn { border:0; border-radius:12px; min-height:44px; padding:8px 14px; background:var(--chip); font-weight:600; cursor:pointer; }
+  .btn.danger { background:var(--red); color:#fff; } .btn.primary { background:var(--blue); color:#fff; } .btn:disabled { opacity:.45; cursor:not-allowed; }
+  input { width:100%; min-height:44px; border-radius:12px; border:1px solid var(--line); background:var(--bg); padding:8px 12px; }
+  #login { max-width:420px; margin:40px auto; } .err { color:var(--red); min-height:1.4em; } .meta { color:var(--dim); font-size:12px; }
+  .on { color:var(--green); } .off { color:var(--orange); }
+</style>
+</head>
+<body>
+<header><h1>Ayra · RAG</h1><span class="pill" id="status">Desconectado</span><a class="pill" href="/memoria" style="margin-left:auto">Memória</a><a class="pill" href="/">Sala do operador</a></header>
+<section id="login" class="card"><h2>Entrar</h2>
+  <p class="meta">Mesmo PIN do painel de Memória. Esta página mostra só números de uso; nenhum texto de conversa.</p>
+  <div style="display:flex;gap:8px"><input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code"><button class="btn primary" id="enter">Entrar</button></div>
+  <p class="err" id="loginErr"></p></section>
+<main id="app" hidden>
+  <section class="card"><h2>Estado</h2>
+    <dl class="kv"><dt>RAG</dt><dd id="ligado">—</dd><dt>Autorizado pela configuração</dt><dd id="permitido">—</dd><dt>Janela</dt><dd id="janela">—</dd></dl>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn danger" id="off">Desligar agora</button><button class="btn" id="on">Ligar</button></div>
+    <p class="meta" id="msg"></p>
+    <p class="meta">Desligar invalida o que está em andamento e o caminho anterior segue sem contexto RAG. Ligar só funciona se o arquivo rag.local.json autoriza.</p></section>
+  <section class="card"><h2>Uso</h2><dl class="kv" id="uso"></dl></section>
+  <section class="card"><h2>Tempos (ms)</h2><dl class="kv" id="tempos"></dl></section>
+  <section class="card"><h2>Bloqueados e falhas</h2><dl class="kv" id="bloq"></dl></section>
+  <section class="card"><h2>Motivos de plano B</h2><dl class="kv" id="motivos"></dl><p class="meta">Plano B = a resposta segue só com as regras vigentes.</p></section>
+  <section class="card"><h2>Configuração efetiva</h2><dl class="kv" id="cfg"></dl></section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let token = sessionStorage.getItem("memToken") || "", timer = 0;
+async function api(path, body) {
+  const opt = { headers: { "X-Token": token } };
+  if (body !== undefined) { opt.method = "POST"; opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const res = await fetch(path, opt); const d = await res.json().catch(() => ({}));
+  if (res.status === 401) { logout(); throw new Error(d.erro || "Entre de novo."); }
+  if (!res.ok && res.status !== 403) throw new Error(d.erro || ("Erro " + res.status));
+  return d;
+}
+function logout() { token = ""; sessionStorage.removeItem("memToken"); $("app").hidden = true; $("login").hidden = false; clearInterval(timer); }
+async function enter() {
+  const pin = $("pin").value.trim();
+  if (!/^\d{6}$/.test(pin)) { $("loginErr").textContent = "O PIN tem 6 dígitos."; return; }
+  try { const r = await fetch("/api/memoria/entrar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin }) });
+    const d = await r.json(); if (!r.ok) { $("loginErr").textContent = d.erro || "Não foi possível entrar."; return; }
+    token = d.token; sessionStorage.setItem("memToken", token); start(); } catch (e) { $("loginErr").textContent = "Sem conexão com o robô."; }
+}
+const rows = (el, pairs) => { $(el).innerHTML = pairs.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") || `<dt class="meta">sem dados</dt><dd></dd>`; };
+async function load() {
+  try {
+    const d = await api("/api/rag"); $("status").textContent = "Conectado";
+    if (!d.disponivel) { $("ligado").textContent = "indisponível"; $("msg").textContent = d.motivo || ""; return; }
+    $("ligado").innerHTML = d.ligado ? '<span class="on">ligado</span>' : '<span class="off">desligado</span>';
+    $("permitido").textContent = d.permitido ? "sim" : "não"; $("janela").textContent = d.janela + " turnos";
+    $("on").disabled = !d.permitido || d.ligado; $("off").disabled = !d.ligado;
+    const c = d.contadores || {};
+    rows("uso", [["Montagens de contexto", c.montagens], ["Com RAG", c.rag], ["Plano B", c.plano_b], ["Prazos estourados", c.prazo], ["Cancelados", c.cancelados],
+                 ["Resultados tardios descartados", c.descartados_tardios], ["Invalidados em andamento", c.invalidados], ["Desligamentos pelo painel", c.desligados_no_painel],
+                 ["Itens recuperados (média)", d.itens_recuperados_medio]]);
+    rows("tempos", [["Montagem p50", d.ms_total?.p50], ["Montagem p95", d.ms_total?.p95], ["Recuperação p50", d.ms_recuperacao?.p50], ["Recuperação p95", d.ms_recuperacao?.p95]]);
+    const b = d.bloqueados || {};
+    rows("bloq", [["Ordens embutidas barradas", b.instrucoes_embutidas], ["Descartados por pouca relevância", b.descartados_limiar], ["Descartados na revalidação", b.descartados_revalidacao],
+                  ["Falhas de recuperação", d.falhas_recuperacao]]);
+    rows("motivos", Object.entries(d.motivos_plano_b || {}));
+    rows("cfg", Object.entries(d.config || {}).map(([k, v]) => [k, String(v)]));
+  } catch (e) { $("status").textContent = e.message; }
+}
+function start() { $("login").hidden = true; $("app").hidden = false; load(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) load(); }, 5000); }
+$("enter").onclick = enter; $("pin").addEventListener("keydown", (e) => { if (e.key === "Enter") enter(); });
+$("off").onclick = async () => { const r = await api("/api/rag/acao", { acao: "desligar" }).catch((e) => ({ erro: e.message })); $("msg").textContent = r.erro || "RAG desligado."; load(); };
+$("on").onclick = async () => { const r = await api("/api/rag/acao", { acao: "ligar" }).catch((e) => ({ erro: e.message })); $("msg").textContent = r.erro || "RAG ligado."; load(); };
+if (token) start();
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+{
+ "autonomo": {
+  "frase digitada pelo operador (say)": {
+   "response.create": 1
+  },
+  "instrução do operador": {
+   "conversation.item.create:message": 1
+  },
+  "voz ao vivo do operador (25 blocos de 40 ms)": {},
+  "nota de memória do painel": {
+   "conversation.item.create:message": 1
+  },
+  "pergunta digitada pelo usuário no robô": {
+   "aceita": true,
+   "conversation.item.create:message": 2,
+   "response.create": 1,
+   "conversation.item.delete": 1
+  },
+  "usuário aperta falar no robô": {
+   "input_audio_buffer.clear": 1,
+   "input_audio_buffer.append": 25,
+   "input_audio_buffer.commit": 1,
+   "conversation.item.create:message": 1,
+   "response.create": 1
+  }
+ },
+ "assistido": {
+  "frase digitada pelo operador (say)": {
+   "response.create": 1
+  },
+  "instrução do operador": {
+   "conversation.item.create:message": 1
+  },
+  "voz ao vivo do operador (25 blocos de 40 ms)": {},
+  "nota de memória do painel": {
+   "conversation.item.create:message": 1
+  },
+  "pergunta digitada pelo usuário no robô": {
+   "aceita": true,
+   "conversation.item.create:message": 2,
+   "response.create": 1,
+   "conversation.item.delete": 1
+  },
+  "usuário aperta falar no robô": {
+   "input_audio_buffer.clear": 1,
+   "input_audio_buffer.append": 25,
+   "input_audio_buffer.commit": 1,
+   "conversation.item.create:message": 1,
+   "response.create": 1
+  }
+ },
+ "teleoperado": {
+  "frase digitada pelo operador (say)": {},
+  "instrução do operador": {},
+  "voz ao vivo do operador (25 blocos de 40 ms)": {},
+  "nota de memória do painel": {},
+  "pergunta digitada pelo usuário no robô": {
+   "aceita": false
+  },
+  "usuário aperta falar no robô": {}
+ }
+}

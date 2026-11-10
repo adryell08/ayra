@@ -55,9 +55,9 @@ def test_name():
     check("persona: o nome é Ayra", "Seu nome é Ayra" in ia.PERSONA and "Nuria" not in ia.PERSONA)
     check("instruções da Realtime sem o nome antigo", "Nuria" not in ar.INSTRUCTIONS)
     html = (HERE / "operador_web" / "index.html").read_text(encoding="utf-8")
-    check("sala do operador: Ayra", "<title>Ayra · Sala do operador</title>" in html and "Nuria" not in html)
+    check("sala do operador: Ayra", "<title>Ayra - Sala do Operador</title>" in html and "Nuria" not in html)
     texts = [p for p in HERE.glob("*.py") if not p.name.startswith("test_")]
-    leftovers = [p.name for p in texts if re.search(r"\bNuria\b", p.read_text(encoding="utf-8"))]
+    leftovers = [p.name for p in texts if p.name != "contexto.py" and not p.name.startswith("avaliar_") and re.search(r"\bNuria\b", p.read_text(encoding="utf-8"))]   # contexto.py: moldura interna fixada por test_contexto
     check("nenhum texto visível com 'Nuria' no código", not leftovers)
     import credenciais
     check(".env continua o mesmo (variáveis NURIA_* preservadas)", "NURIA_MODELO_REALTIME" in credenciais.DEFAULTS)
@@ -98,6 +98,9 @@ def test_live_thumbnail():
 
         def backend_label(self):
             return "Realtime"
+
+        def can_repeat(self):
+            return False
     live = np.zeros((240, 320, 3), np.uint8)
     live[:] = (0, 0, 255)                                  # vermelho (BGR)
     sent = np.zeros((480, 640, 3), np.uint8)
@@ -128,16 +131,14 @@ def test_mobile_page():
     html = (HERE / "operador_web" / "index.html").read_text(encoding="utf-8")
     check("viewport cobre a tela toda (iPhone com entalhe) e respeita áreas seguras",
           "viewport-fit=cover" in html and "safe-area-inset-bottom" in html and "safe-area-inset-top" in html)
-    check("Falar fica numa barra fixa embaixo (alcance do polegar) com Interromper ao lado",
-          'id="talkBar"' in html and "position: fixed" in html and 'id="stopBar"' in html)
-    check("uma coluna na ordem de uso (vídeo, modo, frase, gestos…)", ".stack { display: contents; }" in html
-          and ".c-say { order: 3; }" in html)
+    check("Falar e Interromper ficam na faixa de ícones, ao alcance do polegar (painel v2; o resto está em test_painel)",
+          'id="talk"' in html and 'id="stop"' in html and 'id="strip"' in html)
+    check("celular: gestos e voz/expressões abrem por cima (openLeft/openRight)", 'id="openLeft"' in html and 'id="openRight"' in html)
     check("celular deitado: vídeo à esquerda, controles à direita", "orientation: landscape" in html)
     check("campos com 16 px (iOS não dá zoom ao digitar)", "font-size: 16px" in html)
     check("botão de falar sem menu de toque longo nem seleção", "-webkit-touch-callout: none" in html
           and 'addEventListener("contextmenu"' in html)
-    check("texto de toque/clique conforme o aparelho", 'class="touch">Toque' in html and "@media (hover: none)" in html)
-    check("alvos de toque ≥ 44 pt (botões e linhas das chaves)", "min-height: 44px" in html and ".toggle > span" in html)
+    check("alvos de toque ≥ 44 px (botões, chaves e campos)", "min-height: 44px" in html and "min-height: 52px" in html)
 
 
 def test_middle_finger():

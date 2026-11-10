@@ -80,18 +80,23 @@ def _lerp(a, b, w):
     return tuple(x + (y - x) * w for x, y in zip(a, b))
 
 
+def blend_hand(p: Hand, q: Hand, w: float) -> Hand:
+    if w <= 0:
+        return p
+    if w >= 1:
+        return q
+    return Hand(_lerp(p.wrist, q.wrist, w), tuple(_n(_lerp(_n(p.fingers), _n(q.fingers), w))),
+                tuple(_n(_lerp(_n(p.palm), _n(q.palm), w))), _lerp(p.curl, q.curl, w),
+                p.thumb + (q.thumb - p.thumb) * w, tuple(_n(_lerp(_n(p.elbow), _n(q.elbow), w))),
+                p.shrug + (q.shrug - p.shrug) * w)
+
+
 def blend(a: Pose, b: Pose, w: float) -> Pose:
     if w <= 0:
         return a
     if w >= 1:
         return b
-
-    def hb(p: Hand, q: Hand) -> Hand:
-        return Hand(_lerp(p.wrist, q.wrist, w), tuple(_n(_lerp(_n(p.fingers), _n(q.fingers), w))),
-                    tuple(_n(_lerp(_n(p.palm), _n(q.palm), w))), _lerp(p.curl, q.curl, w),
-                    p.thumb + (q.thumb - p.thumb) * w, tuple(_n(_lerp(_n(p.elbow), _n(q.elbow), w))),
-                    p.shrug + (q.shrug - p.shrug) * w)
-    return Pose(hb(a.left, b.left), hb(a.right, b.right), _lerp(a.head, b.head, w))
+    return Pose(blend_hand(a.left, b.left, w), blend_hand(a.right, b.right, w), _lerp(a.head, b.head, w))
 
 
 # ---------------------------------------------------------------------------
@@ -342,26 +347,114 @@ def _smooth(x: float) -> float:
     return x * x * (3 - 2 * x)
 
 
+# Canais independentes do corpo: cada gesto reserva os que usa. Gestos de canais diferentes coexistem
+# (ex.: "tchau" com o braço direito + "nao" com a cabeça; "tchau" direito + "joia" esquerdo).
+BOTH_ARMS = ("aplaudir", "encolher_ombros", "comemorar")
+
+
+def gesture_arms(name: str) -> Tuple[str, ...]:
+    """Braços reservados por um gesto: () = só cabeça, ("R",), ou ("L", "R") para gestos de dois braços."""
+    if name in HEAD_ONLY:
+        return ()
+    return ("L", "R") if name in BOTH_ARMS else ("R",)
+
+
+_SIDES = {"direito": "right", "direita": "right", "right": "right", "r": "right", "d": "right",
+          "esquerdo": "left", "esquerda": "left", "left": "left", "l": "left", "e": "left"}
+
+
+def normalize_side(name: str, side) -> str:
+    """"left" só para gesto de um braço com lado esquerdo válido; senão "" (padrão: direito, sem lado)."""
+    if gesture_arms(name) != ("R",):
+        return ""
+    return "left" if _SIDES.get(str(side or "").strip().lower()) == "left" else ""
+
+
+def _mirror_pose_to_left(p: Pose) -> Pose:
+    """Gesto de um braço (feito com o direito) refeito com o esquerdo; a cabeça gira/tomba para o outro lado."""
+    return Pose(_mirror(p.right), p.right, (-p.head[0], p.head[1], -p.head[2]))
+
+
+class _Act:
+    """Um gesto em andamento: seu relógio, os braços que reserva e o ponto de partida de cada canal."""
+    __slots__ = ("name", "g", "started", "arms", "left_side", "frm", "gain", "cut_at", "w0", "w_last")
+
+    def __init__(self, name, started, arms, left_side, frm, gain):
+        self.name, self.g, self.started = name, LIBRARY[name], started
+        self.arms, self.left_side, self.frm, self.gain = arms, left_side, frm, gain
+        self.cut_at: Optional[float] = None      # cancelado neste instante: some em CUT_TIME, sem tranco
+        self.w0 = 1.0                            # peso do gesto quando foi cancelado
+        self.w_last = 1.0                        # último peso calculado (ponto de partida do cancelamento)
+
+
+RELEASE = .35          # s: braço liberado por um gesto interrompido volta ao repouso suavemente
+CUT_TIME = .55         # s: cancelar um gesto em andamento o desfaz suavemente neste tempo
+HEAD_FADE = .3         # s: floreio de cabeça de um gesto de braço some quando um gesto de cabeça assume
+
+
 class Animator:
-    """Mistura repouso, olhar, fala e gestos. Um gesto novo substitui o atual (com transição)."""
+    """Mistura repouso, olhar, fala e gestos em três canais independentes: cabeça, braço esquerdo e direito.
+    Um gesto novo substitui só os gestos que usam os mesmos canais (com transição); os demais continuam."""
 
     def __init__(self):
-        self.current: Optional[str] = None
-        self.started = 0.0
-        self._from: Optional[Pose] = None      # pose no instante em que o gesto atual começou
+        self.acts: List[_Act] = []
         self.last: Pose = REST
+        self._rel: Dict[str, Tuple[Hand, float]] = {}   # braço liberado: (mão de onde sai, instante)
+        self._t: Optional[float] = None
 
-    def play(self, name: str, now: float) -> bool:
-        if name not in LIBRARY:
-            return False
-        self._from = self.last
-        self.current = name
-        self.started = now
-        return True
+    # compatibilidade: antes havia um único gesto por vez
+    @property
+    def current(self) -> Optional[str]:
+        return self.acts[-1].name if self.acts else None
+
+    @property
+    def started(self) -> float:
+        return self.acts[-1].started if self.acts else 0.0
 
     @property
     def busy(self) -> bool:
-        return self.current is not None
+        return bool(self.acts)
+
+    def active(self) -> List[str]:
+        return [a.name for a in self.acts]
+
+    def cancel(self, now: float, arms=None, head: bool = True) -> int:
+        """Cancela gestos em andamento com saída suave (CUT_TIME). `arms`: None = todos, ou ("L",)/("R",)/("L","R").
+        `head=False` poupa os gestos só de cabeça. Devolve quantos gestos foram cancelados."""
+        n = 0
+        for a in self.acts:
+            if a.cut_at is not None:
+                continue
+            if a.arms:
+                if arms is not None and not set(a.arms) & set(arms):
+                    continue
+            elif not head:
+                continue
+            a.cut_at, a.w0 = now, a.w_last
+            n += 1
+        return n
+
+    def play(self, name: str, now: float, side: str = "right") -> bool:
+        """`side` ("right"/"left") só vale para gestos de um braço; os de dois braços e os de cabeça o ignoram."""
+        if name not in LIBRARY:
+            return False
+        arms = gesture_arms(name)
+        left = len(arms) == 1 and str(side).lower().startswith("l")
+        if left:
+            arms = ("L",)
+        keep = []
+        for a in self.acts:
+            if (not arms and not a.arms) or (set(a.arms) & set(arms)):      # mesmo canal: substitui
+                for ch in a.arms:
+                    if ch not in arms:                                       # braço que sobrou: solta com suavidade
+                        self._rel[ch] = (self.last.left if ch == "L" else self.last.right, now)
+                continue
+            keep.append(a)
+        head_taken = bool(arms) and any(not a.arms for a in keep)
+        keep.append(_Act(name, now, arms, left, dict(L=self.last.left, R=self.last.right, head=self.last.head),
+                         0.0 if head_taken else 1.0))
+        self.acts = keep
+        return True
 
     def pose(self, now: float, gaze=(0.0, 0.0), talk: float = 0.0, reduce_motion: bool = False) -> Pose:
         breath = 0.0 if reduce_motion else math.sin(now * 1.3)
@@ -373,25 +466,54 @@ class Animator:
             r = replace(REST.right, wrist=_lerp(REST.right.wrist, (.62, -.70, .74 + k * math.sin(now * 5.1)), 1))
             l = replace(REST.left, wrist=_lerp(REST.left.wrist, (-.62, -.68, .70 + k * math.sin(now * 4.3 + 1)), 1))
             base = replace(base, left=l, right=r)
-        pose = base
-        if self.current is not None:
-            g = LIBRARY[self.current]
-            t = now - self.started
-            if t >= g.duration:
-                self.current = None
-            elif self.current in HEAD_ONLY:
-                # sim/não: o movimento SOMA ao olhar atual (sem puxar a cabeça para a frente nem dar tranco);
-                # com "reduzir movimento" continua visível, só menor (o gesto é a mensagem)
-                k = .5 if reduce_motion else 1.0
-                gh = g.pose(t).head
-                pose = replace(base, head=(base.head[0] + k * gh[0], base.head[1] + k * gh[1], base.head[2] + k * gh[2]))
+        dt = 0.0 if self._t is None else min(max(now - self._t, 0.0), .1)
+        self._t = now
+        self.acts = [a for a in self.acts if now - a.started < a.g.duration
+                     and (a.cut_at is None or now - a.cut_at < CUT_TIME)]
+        hands = {"L": base.left, "R": base.right}
+        head = base.head
+        for ch in list(self._rel):                         # braço solto por gesto interrompido
+            frm, t0 = self._rel[ch]
+            if any(ch in a.arms for a in self.acts):
+                del self._rel[ch]
+                continue
+            x = _smooth((now - t0) / RELEASE)
+            hands[ch] = blend_hand(frm, hands[ch], x)
+            if x >= 1:
+                del self._rel[ch]
+        head_act = next((a for a in self.acts if not a.arms), None)
+        if head_act is not None:
+            # sim/não: o movimento SOMA ao olhar atual (sem puxar a cabeça para a frente nem dar tranco);
+            # com "reduzir movimento" continua visível, só menor (o gesto é a mensagem)
+            k = (.5 if reduce_motion else 1.0) * (1.0 if head_act.cut_at is None
+                                                  else 1.0 - _smooth((now - head_act.cut_at) / CUT_TIME))
+            gh = head_act.g.pose(now - head_act.started).head
+            head = (base.head[0] + k * gh[0], base.head[1] + k * gh[1], base.head[2] + k * gh[2])
+        flourish = [0.0, 0.0, 0.0]
+        for a in self.acts:
+            if not a.arms:
+                continue
+            g, t = a.g, now - a.started
+            target = g.pose(0.0 if reduce_motion else t)
+            if a.left_side:
+                target = _mirror_pose_to_left(target)
+            w = min(_smooth(t / g.blend_in), _smooth((g.duration - t) / g.blend_out))
+            if a.cut_at is None:
+                a.w_last = w
             else:
-                target = g.pose(0.0 if reduce_motion else t)
-                # cabeça: o gesto soma ao olhar
-                target = replace(target, head=tuple(a + b for a, b in zip(target.head, (base.head[0] * .5, base.head[1] * .5, 0))))
-                w_in = _smooth(t / g.blend_in)
-                w_out = _smooth((g.duration - t) / g.blend_out)
-                start = self._from if (self._from is not None and t < g.blend_in) else base
-                pose = blend(start if w_in < 1 else base, target, min(w_in, w_out))
+                w = a.w0 * (1.0 - _smooth((now - a.cut_at) / CUT_TIME))
+            for ch in a.arms:
+                start = a.frm[ch] if t < g.blend_in else hands[ch]
+                hands[ch] = blend_hand(start, target.left if ch == "L" else target.right, w)
+            # cabeça: o gesto soma ao olhar; some devagar se um gesto de cabeça assumir
+            a.gain += ((0.0 if head_act is not None else 1.0) - a.gain) * min(1.0, dt / HEAD_FADE)
+            if a.gain > 1e-3:
+                th = tuple(x + y for x, y in zip(target.head, (base.head[0] * .5, base.head[1] * .5, 0)))
+                start_h = a.frm["head"] if t < g.blend_in else base.head
+                hv = _lerp(start_h, th, w) if 0 < w < 1 else (start_h if w <= 0 else th)
+                flourish = [f + a.gain * (v - b) for f, v, b in zip(flourish, hv, base.head)]
+        if any(flourish):
+            head = tuple(h + f for h, f in zip(head, flourish))
+        pose = Pose(hands["L"], hands["R"], head)
         self.last = pose
         return pose

@@ -136,6 +136,8 @@ class GeminiAdapter:
         self.raw, self.model, self.voice, self.max_tokens = raw, model, voice, max_tokens
         self._out: "queue.Queue[str]" = queue.Queue()
         self._lock = threading.Lock()
+        self._reader_lock = threading.Lock()
+        self._reader = None                    # thread leitora do socket (criada no primeiro recv)
         self._setup_sent = False
         self._audio: list = []                 # pergunta falada (16 kHz) até o response.create
         self._committed = False
@@ -244,19 +246,43 @@ class GeminiAdapter:
         self._audio, self._committed, self._texts, self._images = [], False, [], []
 
     # ---- Gemini -> cliente ----
-    def recv(self) -> str:
-        while True:
+    tool_handler = None                # (nome, args) -> dict: o assistente responde `lembrar` com o resultado REAL (as demais seguem SILENT)
+    continues_after_tools = True       # a função é respondida dentro da vez (SILENT) e a fala vem na mesma vez: sem `response.create` de continuação
+
+    def _start_reader(self) -> None:
+        with self._reader_lock:
+            if self._reader is None and not self._closed:
+                self._reader = threading.Thread(target=self._read_loop, name="gemini-rx", daemon=True)
+                self._reader.start()
+
+    def _read_loop(self) -> None:
+        """Lê o socket numa thread própria e põe TUDO (inclusive o que `send()` gera) em `_out`: `recv()` só espera `_out`.
+        Antes, `_out` só era esvaziada antes de bloquear no socket, e eventos gerados por `send()` ficavam parados até chegar
+        a próxima mensagem do Gemini."""
+        while not self._closed:
             try:
-                return self._out.get_nowait()
-            except queue.Empty:
-                pass
-            raw = self.raw.recv()
+                raw = self.raw.recv()
+            except BaseException as error:                # fim da conexão: o leitor do assistente recebe o erro uma vez e para
+                if not self._closed:
+                    self._out.put(error if isinstance(error, rt.TransportClosed) else rt.TransportClosed(f"O Gemini encerrou a conexão: {error}"))
+                return
             try:
                 msg = json.loads(raw)
             except ValueError:
                 continue
-            with self._lock:
-                self._translate(msg)
+            try:
+                with self._lock:
+                    self._translate(msg)
+            except Exception:
+                continue                                    # mensagem inesperada nunca derruba a leitura
+
+    def recv(self) -> str:
+        self._start_reader()
+        item = self._out.get()
+        if isinstance(item, BaseException):
+            self._out.put(item)                             # leituras seguintes também recebem o fim da conexão
+            raise item
+        return item
 
     def _translate(self, msg: dict) -> None:
         if "setupComplete" in msg:
@@ -272,6 +298,13 @@ class GeminiAdapter:
             for call in msg["toolCall"].get("functionCalls") or []:
                 cid = call.get("id") or f"call_g{self._seq}"
                 args = json.dumps(call.get("args") or {}, ensure_ascii=False)
+                if call.get("name") == "lembrar" and self.tool_handler is not None:
+                    try:
+                        result = self.tool_handler("lembrar", call.get("args") or {})
+                    except Exception:
+                        result = dict(itens=[], motivo_fallback="erro_recuperacao", nada_encontrado=True)
+                    responses.append({"id": cid, "name": "lembrar", "response": {"result": result}})     # o modelo usa o resultado e fala na mesma vez
+                    continue
                 if self._rid is None:
                     self._new_ids()
                 self._calls.append({"type": "function_call", "call_id": cid, "name": call.get("name"), "arguments": args})
@@ -334,6 +367,7 @@ class GeminiAdapter:
 
     def close(self) -> None:
         self._closed = True
+        self._out.put(rt.TransportClosed("Conexão com o Gemini encerrada."))     # destrava quem espera em `recv()`
         try:
             self.raw.close()
         except Exception:

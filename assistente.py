@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Deque, List, Optional, Tuple
 
 import credenciais
 import historico
@@ -32,6 +33,8 @@ class Snapshot:
     expr_version: int = 0            # muda quando a IA pede nova expressão (tempo real)
     gesture: str = ""                # gesto do corpo 3D (gestos.GESTURES), pedido pela IA ou pelo operador
     gesture_version: int = 0         # muda a cada pedido de gesto (o mesmo gesto pode repetir)
+    gesture_source: str = "ai"          # quem pediu o último gesto: "ai" ou "operator"
+    gesture_side: str = ""           # "left" = braço esquerdo (só gestos de um braço); "" = padrão (direito)
     vision: bool = True              # False = visão pausada: perguntas vão sem imagem
     mode: str = "autonomo"           # autonomo | assistido | teleoperado (controle remoto, etapa 2)
     operator: str = ""               # operador remoto conectado ("" = nenhum)
@@ -69,6 +72,12 @@ class Assistant:
         self.memory = None                                # memoria.Memory (opcional); main.py liga
         self.state_since = time.perf_counter()
         self.offline_speaking = False
+        # pedidos de gesto em ordem (limitada): o orquestrador do main.py os lê todos, sem perder o primeiro
+        # quando operador e IA pedem no mesmo quadro
+        self._gesture_requests: Deque[Tuple[str, str, str]] = deque()      # limitada a MAX_GESTURE_REQUESTS em request_gesture
+        self.gesture_drops = 0         # pedidos descartados por rajada (nunca em silêncio: fica contado)
+        self.expression_gate: Optional[Callable[[], bool]] = None   # False = a IA não muda a expressão agora
+        self.cancel_epoch = 0          # sobe quando gestos da IA devem sumir (cancelamento, barge-in, teleoperado)
 
     # ---- leitura pela interface --------------------------------------------
     def snapshot(self) -> Snapshot:
@@ -81,14 +90,48 @@ class Assistant:
     def state(self) -> str:
         return self._snap.state
 
-    def request_gesture(self, name: str) -> bool:
-        """Pede um gesto ao corpo 3D (no 2D vira aviso). Nome inválido é ignorado."""
-        from gestos import GESTURES
+    MAX_GESTURE_REQUESTS = 8
+
+    def _queue_gesture(self, item) -> None:
+        """(com o lock) Fila cheia: sai o pedido mais antigo da IA; só se não houver, o mais antigo de todos.
+        Assim uma rajada da IA nunca expulsa um comando do operador."""
+        q = self._gesture_requests
+        while len(q) >= self.MAX_GESTURE_REQUESTS:
+            victim = next((r for r in q if r[2] != "operator"), q[0])
+            q.remove(victim)
+            self.gesture_drops += 1
+        q.append(item)
+
+    def drop_ai_gestures(self) -> None:
+        """Cancelamento/interrupção/troca para teleoperado: pedidos de gesto da IA ainda não lidos somem e o
+        orquestrador (main.py) é avisado pelo `cancel_epoch`. Pedidos do operador ficam."""
+        with self._lock:
+            keep = [r for r in self._gesture_requests if r[2] == "operator"]
+            self._gesture_requests.clear()
+            self._gesture_requests.extend(keep)
+            self.cancel_epoch += 1
+
+    def pop_gesture_requests(self) -> List[Tuple[str, str, str]]:
+        """(nome, lado, origem) dos pedidos de gesto desde a última leitura, do mais antigo ao mais novo."""
+        with self._lock:
+            out = list(self._gesture_requests)
+            self._gesture_requests.clear()
+        return out
+
+    def request_gesture(self, name: str, side=None, source: str = "ai") -> bool:
+        """Pede um gesto ao corpo 3D (no 2D vira aviso). Nome inválido é ignorado. `side` ("esquerdo"/"direito"…)
+        só vale para gestos de um braço; inválido ou ausente = direito."""
+        from gestos import GESTURES, normalize_side
         name = str(name or "").strip().lower()
         if name not in GESTURES:
             return False
+        if str(source) != "operator" and self._snap.mode == "teleoperado":
+            return False                              # teleoperado: nenhum gesto da IA (nem atrasado) chega ao corpo
         with self._lock:
             self._snap.gesture = name
+            self._snap.gesture_side = normalize_side(name, side)
+            self._snap.gesture_source = "operator" if str(source) == "operator" else "ai"
+            self._queue_gesture((name, self._snap.gesture_side, self._snap.gesture_source))
             self._snap.gesture_version += 1
         return True
 
@@ -134,6 +177,7 @@ class Assistant:
         return True
 
     def cancel(self) -> None:
+        self.drop_ai_gestures()
         with self._lock:
             self._gen += 1
         self._stop_listen.set()
@@ -361,6 +405,9 @@ class Assistant:
         """Emoção da resposta fica fixa até o fim da fala (reações rápidas não a apagam);
         só se o humor estava em automático ou foi fixado por nós (não desfaz as teclas 1–8)."""
         self._applied_expr = self._snap.expr_version
+        gate = self.expression_gate
+        if gate is not None and not gate():           # orquestrador: operador ocupa a expressão ou modo teleoperado
+            return
         action = self._snap.action
         emotion = "sad" if action == "cry" else self._snap.emotion
         ours = getattr(self, "_held_mood", False)

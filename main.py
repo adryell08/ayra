@@ -71,6 +71,8 @@ def parse_args(argv=None):
     ap.add_argument("--sem-ia", action="store_true", help="esconder a coluna da Ayra (só o rosto)")
     ap.add_argument("--imagem", default=None, help="foto usada quando não há câmera (ensaio/demonstração)")
     ap.add_argument("--sem-memoria", action="store_true", help="não guardar instruções e preferências entre conversas (logs/memoria.db)")
+    ap.add_argument("--explorar", action="store_true",
+                    help="experimental: com o robô parado, combina gestos sozinho (desligado por padrão)")
     ap.add_argument("--sem-registro", action="store_true", help="não gravar logs/sessoes.jsonl (só texto e tempos)")
     ap.add_argument("--run-seconds", type=float, default=0, help=argparse.SUPPRESS)   # só para testes
     parsed = ap.parse_args(argv)
@@ -191,6 +193,9 @@ def main(argv=None) -> int:
 
     relayout(screen)
     hud = HudInfo(reduce_motion=reduce_motion, debug=args.debug, sensitivity=args.sens)
+
+    def toast(msg: str) -> None:
+        hud.toast, hud.toast_age = msg, 0.0
     hud.features = dict(features)
 
     # ---- painel LED físico (Arduino): só espelha o rosto; a interface na tela não muda ----
@@ -269,8 +274,11 @@ def main(argv=None) -> int:
                        model=cfg.gemini_model if gemini else cfg.realtime_model,
                        voice=cfg.gemini_voice if gemini else cfg.realtime_voice, test=api_ui["test"],
                        tokens=tokens_label(cfg.max_tokens), confirm_remove=api_ui["confirm_remove"],
-                       source=credenciais.key_source(name="GEMINI_API_KEY" if key_entry.kind == "gemini" else "OPENAI_API_KEY"),
-                       robot_voice=cfg.robot_voice, robot_level=cfg.robot_level)
+                       source=credenciais.key_source(name={"gemini": "GEMINI_API_KEY", "eleven": "ELEVENLABS_API_KEY"}.get(key_entry.kind, "OPENAI_API_KEY")),
+                       robot_voice=cfg.robot_voice, robot_level=cfg.robot_level,
+                       eleven_configured=cfg.eleven_configured, eleven_on=cfg.eleven_on,
+                       emasked=credenciais.mask(cfg.eleven_key) if cfg.eleven_configured else "",
+                       eleven_test=api_ui.get("eleven_test", "Tocar para ouvir uma frase"))
 
     def api_reconnect():
         if hasattr(assistant, "warmup") and args.ia == "realtime" and credenciais.load().live_configured:
@@ -300,6 +308,25 @@ def main(argv=None) -> int:
                 key_entry.open("openai")
             elif name == "gkey":
                 key_entry.open("gemini")
+            elif name == "ekey":
+                key_entry.open("eleven")
+            elif name == "evoice":
+                credenciais.set_env_values({"NURIA_ELEVEN": "off" if cfg.eleven_on else "on"})
+                toast("Voz única ElevenLabs " + ("desligada" if cfg.eleven_on else "ligada"))
+            elif name == "etest":
+                if not cfg.eleven_configured:
+                    api_ui["eleven_test"] = "Cole a chave da ElevenLabs primeiro"
+                else:
+                    api_ui["eleven_test"] = "Testando…"
+                    import eleven
+
+                    def run_eleven_test():
+                        ok, msg = eleven.ElevenTTS(cfg.eleven_key, cfg.eleven_voice, cfg.eleven_model).check()
+                        api_ui["eleven_test"] = ("OK · " if ok else "Falhou · ") + msg
+                        if ok:
+                            assistant.operator_say("Olá! Esta é a minha voz.")
+                        api_state()
+                    threading.Thread(target=run_eleven_test, name="eleven-test", daemon=True).start()
             elif name == "provider":
                 credenciais.set_env_values({"NURIA_PROVEDOR": "openai" if gemini else "gemini"})
                 api_ui["test"] = "Tocar para testar o provedor escolhido"
@@ -338,8 +365,9 @@ def main(argv=None) -> int:
             toast(f"Não foi possível gravar o .env: {error}")
         api_state()
 
-    def set_robot_voice(percent, save=True):
-        """Grau da voz robótica, 0–100 %. Vale na hora para a IA e para o operador."""
+    def set_robot_voice(percent, save=True, quiet=False):
+        """Grau da voz robótica, 0–100 %. Vale na hora para a IA e para o operador.
+        `quiet=True` (painel do operador): nenhum aviso na tela do robô, para a pessoa não perceber que há um operador."""
         percent = max(0, min(100, int(percent)))
         if save:
             try:
@@ -348,19 +376,23 @@ def main(argv=None) -> int:
                 toast(f"Não foi possível gravar o .env: {error}")
         if hasattr(assistant, "robot_level"):
             assistant.robot_level = percent / 100.0
-        if save:
+        if save and not quiet:
             toast("Voz robótica: " + (f"{percent} %" if percent else "desligada"))
 
     def api_save_key(key, kind="openai"):
+        name = {"gemini": "GEMINI_API_KEY", "eleven": "ELEVENLABS_API_KEY"}.get(kind, "OPENAI_API_KEY")
         try:
-            credenciais.set_env_values({"GEMINI_API_KEY" if kind == "gemini" else "OPENAI_API_KEY": key})
+            credenciais.set_env_values({name: key})
         except OSError as error:
             toast(f"Não foi possível gravar o .env: {error}")
             return
-        name = "GEMINI_API_KEY" if kind == "gemini" else "OPENAI_API_KEY"
         warn = " (a variável do Windows tem prioridade)" if credenciais.key_source(name=name) == "windows" else ""
         toast("Chave salva" + warn)
         ai_label.at = -9                         # o subtítulo da coluna relê o .env já
+        if kind == "eleven":
+            api_ui["eleven_test"] = "Tocar para ouvir uma frase"
+            api_state()
+            return
         api_reconnect()
         api_test()
 
@@ -428,6 +460,8 @@ def main(argv=None) -> int:
                         robot.expr.shown_name(), robot.expr.shown_name()), visao=s.vision,
                     voz_robotica=bool(getattr(assistant, "robot_voice", False)),
                     voz_robotica_nivel=int(round(100 * getattr(assistant, "robot_level", 0.0))), rostos=remote["faces"],
+                    voz_perfil=getattr(assistant, "voice_profile", "original"),
+                    voz_diag=assistant.voice_diag() if hasattr(assistant, "voice_diag") else {},
                     corpo3d=body["on"], gesto=GESTURES.get(body["gesture"], "") if time.perf_counter() - t0 < body["until"] else "",
                     fps=remote["fps"], eco=hub.mode, continua=bool(getattr(assistant, "continuous", False)))
 
@@ -440,12 +474,13 @@ def main(argv=None) -> int:
                                 port=remote["port"], pin=remote["pin"], fps=remote["fps"],
                                 mic_factory=lambda: HubMic(hub))
         server.memory = memory                    # painel /memoria (mesmo PIN)
+        server.rag_provider = lambda: assistant.rag_assembler() if hasattr(assistant, "rag_assembler") else None     # painel /rag (métricas, sem texto)
         if server.start():
             remote["server"] = server
+            remote_save()
         else:
-            toast(server.status)
+            toast(server.status)                  # falhou (porta ocupada...): segue sem operador e NÃO regrava a preferência
             remote["enabled"] = False
-        remote_save()
         remote_state()
 
     def remote_stop():
@@ -489,7 +524,6 @@ def main(argv=None) -> int:
         if kind == "operator":
             if hasattr(assistant, "set_operator"):
                 assistant.set_operator(data)
-            toast(f"Operador conectado: {data}" if data else "Operador desconectado")
         elif kind == "mode" and hasattr(assistant, "set_mode"):
             assistant.set_mode(str(data.get("modo", "")))
         elif kind == "memory_note" and hasattr(assistant, "memory_note"):
@@ -497,13 +531,14 @@ def main(argv=None) -> int:
             audio_state()
         elif kind == "instruction" and hasattr(assistant, "operator_instruction"):
             assistant.operator_instruction(str(data.get("texto", "")))
-            toast("Instrução do operador registrada")
+            toast("Instrução registrada")
         elif kind == "say" and hasattr(assistant, "operator_say"):
             assistant.operator_say(str(data.get("texto", "")))
         elif kind == "interrupt":
             assistant.cancel()
+            orch.cancel("ai", nowt)                           # a IA para: gestos dela somem, os do operador ficam
         elif kind == "gesture":
-            assistant.request_gesture(str(data.get("nome", "")))
+            assistant.request_gesture(str(data.get("nome", "")), data.get("lado"), source="operator")
         elif kind == "body":
             set_body(bool(data.get("ligado")))
         elif kind == "vision":
@@ -511,11 +546,11 @@ def main(argv=None) -> int:
         elif kind == "robot_voice":
             if "nivel" in data:
                 try:
-                    set_robot_voice(float(data["nivel"]), save=bool(data.get("final", True)))
+                    set_robot_voice(float(data["nivel"]), save=bool(data.get("final", True)), quiet=True)
                 except (TypeError, ValueError):
                     pass
             else:
-                set_robot_voice(60 if data.get("ligado") else 0)
+                set_robot_voice(60 if data.get("ligado") else 0, quiet=True)
             if data.get("final", True):
                 api_state()
         elif kind == "look":
@@ -526,6 +561,8 @@ def main(argv=None) -> int:
                 pass
         elif kind == "expression":
             name = str(data.get("nome", ""))
+            if name != "auto":
+                orch.claim_expression("operator", nowt)       # o operador segura o canal de expressão contra a IA
             if name == "auto":
                 robot.set_mood("auto")
                 robot.stop("cry")
@@ -620,6 +657,23 @@ def main(argv=None) -> int:
         if args.ia == "simulada" or credenciais.load().live_configured:
             assistant.warmup()                  # conecta já; a 1ª pergunta não espera o aperto de mão
     assistant.memory = memory                     # no-op se desligada, sem registro ou se o banco falhar
+    faces = None
+    if (args.ia != "legado" and not args.sem_registro and not args.sem_memoria
+            and os.environ.get("NURIA_ROSTOS", "on").strip().lower() not in ("off", "0", "nao", "não")):
+        import rostos
+
+        def face_frame():
+            if not using_sim and hasattr(src, "latest_frame"):
+                return src.latest_frame()
+            if args.imagem:
+                import cv2
+                return cv2.imread(args.imagem)
+            return None
+        faces = rostos.FaceRecognizer(rostos.FaceBook(), face_frame, on_change=assistant.identity_note)
+        if not faces.embedder.available():
+            faces.error = "modelo SFace ausente: execute preparar_modelos.bat"     # as ferramentas respondem "indisponível"
+        assistant.faces = faces
+        faces.start()
     state_ref["assistant"] = assistant
     audio_state()
     assistant_state = "idle"
@@ -646,8 +700,6 @@ def main(argv=None) -> int:
     speaker_cycle = 0
     last_logged_trigger = 0
 
-    def toast(msg: str) -> None:
-        hud.toast, hud.toast_age = msg, 0.0
 
     # ---- corpo 3D (Blender -> OpenGL): rosto atual no visor, gestos da IA e do operador ----
     import corpo3d
@@ -663,9 +715,14 @@ def main(argv=None) -> int:
     except (OSError, ValueError):
         body_cfg = {}
     body = dict(obj=None, on=False, error="", face=None, img=None, last=-1.0, applied=0, gesture="", until=0.0)
+    from orquestrador import Explorer, Orchestrator
+    orch = Orchestrator()                                    # quem manda em cada canal do corpo (operador > IA > espontâneo)
+    explorer = Explorer(orch, enabled=bool(args.explorar))
+    assistant.expression_gate = lambda: orch.expression_allowed("ai")
+    cancel_seen = [getattr(assistant, "cancel_epoch", 0)]
 
     def body_state():
-        hud.body = dict(enabled=body["on"], error=body["error"])
+        hud.body = dict(enabled=body["on"], error=body["error"], auto=bool(body_cfg.get("qualidade_auto", True)))
 
     perf = {"t": 0.0, "ms": [], "laps": {}, "mark": time.perf_counter(), "cpu": sum(os.times()[:2]), "thr": {}}
 
@@ -693,7 +750,7 @@ def main(argv=None) -> int:
             if ok:
                 try:
                     body["obj"] = corpo3d.Body3D()
-                    body["obj"].adaptive = bool(args.leve)       # qualidade máxima por padrão; só o modo leve (Raspberry) reduz sozinho
+                    body["obj"].set_adaptive(body_cfg.get("qualidade_auto", True))   # ligado: começa no máximo e só desce se o desenho passar de 14 ms (iGPU/Raspberry); desligado: sempre o máximo
                     try:
                         LOG_DIR.mkdir(exist_ok=True)
                         with open(LOG_DIR / "desempenho.log", "a", encoding="utf-8") as fh:
@@ -711,15 +768,24 @@ def main(argv=None) -> int:
         body["img"] = None
         if save:
             try:
-                body_cfg_path.write_text(_json.dumps({"ligado": body["on"]}) + "\n", encoding="utf-8")
+                body_cfg["ligado"] = body["on"]
+                body_cfg_path.write_text(_json.dumps(body_cfg) + "\n", encoding="utf-8")
             except OSError:
                 pass
         body_state()
 
-    def body_gesture(name: str, now: float):
+    def body_cancel(cmd, now: float):
+        """Cancela (com saída suave) os gestos de uma ordem `cancel` do orquestrador."""
+        if body["on"] and body["obj"] is not None:
+            arms = tuple(a for a, ch in (("L", "arm_l"), ("R", "arm_r")) if ch in cmd.channels)
+            body["obj"].cancel(now, arms or None, head="head" in cmd.channels or not arms)
+        if body.get("head2d") == cmd.name:
+            body["head2d"] = None
+
+    def body_gesture(name: str, now: float, side: str = ""):
         body["gesture"], body["until"] = name, now + GESTURE_LIBRARY[name].duration
         if body["on"] and body["obj"] is not None:
-            body["obj"].play(name, now)
+            body["obj"].play(name, now, side or "right")
         elif name in ("sim", "nao"):
             body["head2d"], body["head2d_t0"] = name, now      # rosto 2D (e painel LED): o olhar faz o sim/não
         else:
@@ -900,8 +966,18 @@ def main(argv=None) -> int:
                 if action and action.startswith("body:"):
                     if action == "body:enabled":
                         set_body(not body["on"])
+                    elif action == "body:quality":
+                        body_cfg["qualidade_auto"] = not body_cfg.get("qualidade_auto", True)
+                        if body["obj"] is not None:
+                            body["obj"].set_adaptive(body_cfg["qualidade_auto"])
+                        try:
+                            body_cfg_path.write_text(_json.dumps(body_cfg) + "\n", encoding="utf-8")
+                        except OSError:
+                            pass
+                        toast("Qualidade 3D: " + ("automática" if body_cfg["qualidade_auto"] else "sempre no máximo"))
+                        body_state()
                     else:
-                        assistant.request_gesture(action.split(":", 2)[2])
+                        assistant.request_gesture(action.split(":", 2)[2], source="operator")
                     continue
                 if action and action.startswith("api:"):
                     api_action(action.split(":", 1)[1])
@@ -1048,10 +1124,19 @@ def main(argv=None) -> int:
                     remote_state()
             assistant_state = assistant.drive_robot(robot, now, assistant_state)
             gsnap = assistant.snapshot()
-            if gsnap.gesture_version != body["applied"]:
-                body["applied"] = gsnap.gesture_version
-                if gsnap.gesture in GESTURES:
-                    body_gesture(gsnap.gesture, now)
+            orch.set_mode(gsnap.mode, now)
+            if getattr(assistant, "cancel_epoch", 0) != cancel_seen[0]:
+                cancel_seen[0] = assistant.cancel_epoch
+                orch.cancel("ai", now)                        # cancelamento/barge-in/teleoperado: nada da IA fica no corpo
+            for g_name, g_side, g_src in assistant.pop_gesture_requests():
+                orch.submit_gesture(g_src, g_name, now, side=g_side)
+            orch.update(now)
+            explorer.tick(now, can_run=gsnap.state == "idle")
+            for cmd in orch.drain():
+                if cmd.kind == "play" and cmd.name in GESTURES:
+                    body_gesture(cmd.name, now, cmd.side)
+                elif cmd.kind == "cancel":
+                    body_cancel(cmd, now)
             if body.get("head2d"):
                 look = head_gaze(body["head2d"], now - body["head2d_t0"])
                 if look is None or now - body["head2d_t0"] > GESTURE_LIBRARY[body["head2d"]].duration:
@@ -1155,12 +1240,6 @@ def main(argv=None) -> int:
             panel.draw(renderer, assistant, dt, reduce_motion, ai_label())
             lap("painel")
             renderer.draw_hud(frame, hud)
-            if hud.remote.get("operator") and hud.remote.get("badge", True):   # Ajustes → Controle remoto → Aviso na tela
-                modo = {"autonomo": "autônomo", "assistido": "assistido", "teleoperado": "teleoperado"}.get(
-                    assistant.snapshot().mode, "")
-                renderer._chip([f"Operador conectado · {hud.remote['operator']} · vendo e ouvindo · modo {modo}"],
-                               (renderer.panel.centerx, int(16 * renderer.s)), "tc", "circle",
-                               renderer.scheme.palette["red"])
             key_entry.draw(renderer, hud.api.get("source", ""))
             chat.draw(renderer, getattr(assistant, "session_id", ""))
             lap("hud")
@@ -1179,6 +1258,8 @@ def main(argv=None) -> int:
                 raise
 
     assistant.shutdown()
+    if faces is not None:
+        faces.stop()
     memory.flush(1.0)
     memory.close()
     led_link.stop()

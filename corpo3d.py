@@ -247,14 +247,23 @@ class Body3D:
               and now - self._q_changed > 15.0):
             self._set_quality(self.q - 1, now)                       # folga de sobra e estável: sobe um degrau
 
+    def set_adaptive(self, on: bool) -> None:
+        """Liga/desliga o ajuste automático. Desligado = sempre a qualidade máxima, custe o que custar."""
+        self.adaptive = bool(on)
+        if not self.adaptive and self.q != 0:
+            self._set_quality(0, time.perf_counter())
+
     def _set_quality(self, q: int, now: float) -> None:
         self.q, self._q_changed = q, now
         self.samples, self.scale = self.ladder[q]
         self.size = (0, 0)                                           # recria os alvos de desenho
         self._renders = 0
 
-    def play(self, name: str, now: float) -> bool:
-        return self.anim.play(name, now)
+    def play(self, name: str, now: float, side: str = "right") -> bool:
+        return self.anim.play(name, now, side)
+
+    def cancel(self, now: float, arms=None, head: bool = True) -> int:
+        return self.anim.cancel(now, arms, head)
 
     def release(self):
         try:

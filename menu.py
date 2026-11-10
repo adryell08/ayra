@@ -69,6 +69,12 @@ class OptionsMenu:
                                                 else "Não configurada · tocar para colar"), "" if gemini else "Em uso"),
                 ("api:gkey", "Chave do Gemini", (f"{a.get('gmasked', '')} · tocar para trocar" if has_gkey
                                                  else "Não configurada · tocar para colar"), "Em uso" if gemini else ""),
+                ("api:ekey", "Chave da ElevenLabs", (f"{a.get('emasked', '')} · tocar para trocar" if a.get("eleven_configured")
+                                                     else "Não configurada · tocar para colar"),
+                 "Em uso" if a.get("eleven_configured") and a.get("eleven_on") else ""),
+                ("api:evoice", "Voz única (ElevenLabs)", ("Ligada · IA e operador com a mesma voz · tocar para desligar"
+                                                          if a.get("eleven_on") else "Desligada · tocar para ligar"), "on" if a.get("eleven_on") else "off"),
+                ("api:etest", "Testar voz ElevenLabs", a.get("eleven_test", "Tocar para ouvir uma frase"), ""),
                 ("api:test", "Testar conexão", a.get("test", "Tocar para testar o provedor escolhido"), ""),
                 ("api:remove", "Remover chave", "Toque de novo para confirmar" if a.get("confirm_remove")
                  else "Apaga do .env a chave do provedor escolhido", ""),
@@ -94,7 +100,11 @@ class OptionsMenu:
             b = getattr(hud, "body", {}) or {}
             on = b.get("enabled", False)
             status = "Ligado · F3 alterna" if on else (b.get("error") or "Rosto 2D · F3 alterna")
-            return [("body:enabled", "Corpo 3D", status, "on" if on else "off")] + [
+            auto = b.get("auto", True)
+            return [("body:enabled", "Corpo 3D", status, "on" if on else "off"),
+                    ("body:quality", "Qualidade automática do 3D",
+                     "Ligada: reduz sozinha se travar" if auto else "Desligada: sempre no máximo, mesmo com lag",
+                     "on" if auto else "off")] + [
                 ("body:gesture:" + name, label, "Tocar para ver" if on else "Ligue o corpo 3D para ver", "")
                 for name, label in GESTURES.items()]
         if view == "remote":
@@ -107,8 +117,6 @@ class OptionsMenu:
                 ("remote:memory", "Painel de memória (navegador)", (r.get("url", "") + "/memoria · mesmo PIN") if on else "Ligue a sala primeiro", ""),
                 ("remote:kick", "Desconectar operador", r.get("operator") or "Nenhum conectado", ""),
                 ("remote:fps", "Vídeo para o operador", f"{r.get('fps', 10)} quadros/s · tocar para trocar (5, 10, 15)", ""),
-                ("remote:badge", "Aviso na tela", "Barra \"Operador conectado · nome · modo\"",
-                 "on" if r.get("badge", True) else "off"),
             ]
         if view == "arduino":
             a = getattr(hud, "arduino", {}) or {}
@@ -158,14 +166,14 @@ class OptionsMenu:
         if action.startswith("sim:"):
             return "SIMULAÇÕES"
         if action.startswith("body:"):
-            return "VISUAL" if action == "body:enabled" else "GESTOS"
+            return "VISUAL" if action in ("body:enabled", "body:quality") else "GESTOS"
         if action.startswith("audio:"):
             return ("CONVERSA" if action == "audio:continuous" else "MEMÓRIA" if action in ("audio:memory", "audio:forget")
                     else "MICROFONE")
         if action.startswith("remote:"):
             return "SALA DO OPERADOR"
         if action.startswith("api:"):
-            return "CONEXÃO" if action in ("api:provider", "api:key", "api:gkey", "api:test", "api:remove") else "VOZ E MODELO"
+            return "CONEXÃO" if action in ("api:provider", "api:key", "api:gkey", "api:ekey", "api:test", "api:remove") else "VOZ E MODELO"
         if action.startswith("arduino:"):
             key = action.split(":")[1]
             return "PAINEL LED" if key in ("enabled", "port", "brightness", "size", "test") else "MONTAGEM DO PAINEL"
@@ -457,7 +465,7 @@ class OptionsMenu:
                 pygame.draw.rect(renderer.screen, sc.text, rect, width=max(1, int(scale)),
                                  border_radius=int(20 * scale))
             toggle = action.startswith(("feature:", "sim:")) or action in (
-                "arduino:enabled", "arduino:test", "remote:enabled", "remote:badge", "body:enabled",
+                "arduino:enabled", "arduino:test", "remote:enabled", "body:enabled", "body:quality",
                 "audio:continuous", "audio:memory")
             key = renderer._text("caption", "" if toggle else shortcut, sc.text_dim)
             available = rect.w - 3 * pad - max(key.get_width(), int((48 if toggle else 28) * scale))

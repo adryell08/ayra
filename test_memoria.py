@@ -97,9 +97,12 @@ def test_store():
     check("candidato de A não vira conhecimento técnico para B", "Adryell" not in mem.get_session_context("sB", user_id="B"))
     mem.validate_memory(mid, reviewer="adryell")
     mem.flush()
-    check("depois de validado por um revisor, vale como conhecimento global (com registro de feedback)",
-          "Conhecimento validado" in mem.get_session_context("sB", user_id="B")
+    check("validado por um revisor continua PESSOAL (só o dono vê como conhecimento validado; com registro de feedback)",
+          "Conhecimento validado" in mem.get_session_context("s1") and "Adryell" not in mem.get_session_context("sB", user_id="B")
           and mem._conn.execute("SELECT reviewer FROM feedback").fetchone()[0] == "adryell")
+    mem.promote_to_global(mid, "adryell")
+    mem.flush()
+    check("só a promoção explícita a global o torna conhecimento de todos", "Conhecimento validado" in mem.get_session_context("sB", user_id="B"))
 
 
 def test_context_and_cost():
@@ -202,7 +205,7 @@ def test_modes():
         h.a.new_conversation()
         h.a.ask_text("O que mesmo está valendo?")
         h.idle()
-        ctx = [e for e in h.servers[-1].received if e["type"] == "conversation.item.create" and "Memória do Nuria" in json.dumps(e, ensure_ascii=False)]
+        ctx = [e for e in h.servers[-1].received if e["type"] == "conversation.item.create" and "Memória da Ayra" in json.dumps(e, ensure_ascii=False)]
         check("após mudar de assunto e abrir sessão nova, a IA recebe a instrução (e não o histórico inteiro)",
               len(h.servers) == n_srv + 1 and ctx and "sala do evento" in json.dumps(ctx[0], ensure_ascii=False)
               and "Qual é a sua cor" not in json.dumps(ctx, ensure_ascii=False))

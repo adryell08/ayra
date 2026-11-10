@@ -100,3 +100,36 @@ pendente e `conversation.item.truncate(audio_end_ms = amostras tocadas)`. Funç�
   canto saem. **Modo leve** (`--leve`): 30 fps, sem brilho nem vidro desfocado, detecção menor.
 - **Áudio**: `HubMic` limita a fila a 3 blocos de 20 ms; a voz do operador é reamostrada com estado (`StreamResampler`) e o
   `StreamPlayer` tem buffer de jitter de 60 ms (reagrupa depois de um esvaziamento). Voz robótica ao vivo com 45 % de voz original.
+
+## Orquestrador local de comportamento (`orquestrador.py`)
+
+Decide quem manda em cada canal do corpo (expressão, cabeça, braço L, braço R): **operador (3) > IA (2) > espontâneo (1)**.
+Só em memória; sem rede, sem chamadas de API, sem gravar nada. O tempo entra por parâmetro (testável sem relógio).
+
+- Um pedido ocupa só os canais que usa; prioridade maior assume, igual substitui, menor é bloqueado (tudo ou nada).
+- IA bloqueada espera numa fila curta (TTL 1,5 s, máx. 4, pedidos repetidos só renovam o prazo); espontâneo bloqueado é descartado.
+- Teleoperado: só o operador age. Ao entrar, o que era da IA/espontâneo é cancelado (saída suave, `Animator.cancel`, 0,55 s) e
+  a fila é esvaziada. `request_gesture` da IA também é recusado na origem nesse modo.
+- Expressão: o operador reserva o canal por 3 s (`claim_expression`); `Assistant.expression_gate` impede a IA de sobrescrever.
+- Fluxo: `request_gesture(nome, lado, source)` → fila limitada `pop_gesture_requests()` → `orch.submit_gesture` →
+  `orch.update` → `orch.drain()` → `body_gesture`/`body_cancel` (main.py). A API antiga continua valendo (origem padrão: IA).
+- `Explorer` (flag `--explorar`, **desligado por padrão**): com o robô parado há ≥ 25 s e no máx. a cada 60 s, tenta uma das ≤ 8
+  combinações fixas de `PRESETS` como "espontâneo". Pontuações só em memória (`reward()`); nada é gerado, editado nem enviado.
+
+Próximas etapas: canal de expressão com estados do rosto (hoje só portão contra a IA), aprendizado a partir de reações reais do
+público, painel do operador mostrando o que está ocupado, validação física com 3D/GPU e operador real.
+
+## Voz: perfis e máscara (`filtro_voz.VoiceMask`)
+
+Painel do operador → "Voz do robô": **Original** (voz como chega, sem filtro), **Robótica** (100 % filtro, sem voz original
+misturada — a mesma voz para a IA e para o operador) e **Mistura** (parcial; a voz original continua audível, por isso
+não padroniza a identidade: o painel avisa).
+- Com Robótica ou Mistura ativas o áudio original **nunca** toca como plano B: se o filtro falhar (biblioteca ausente, erro,
+  saída inválida) o bloco é descartado, o robô responde só em texto e tenta o filtro de novo após 2 s. Em **Original** o filtro nem é usado, então
+  ele não pode silenciar o robô.
+- Público: só o aviso neutro "Voz indisponível no momento." (sem origem, motivo nem modo). Privado: `voz_perfil` e `voz_diag`
+  (falhas, último erro, blocos descartados/processados, p50/p95 do bloco) na telemetria do operador.
+- O filtro e o scipy só são carregados quando um perfil de máscara é usado.
+- Respostas: regras de tamanho no `ia.PERSONA`; `python relatorio_uso.py [antes.jsonl depois.jsonl]` resume os tokens por resposta
+  do `logs/uso_api.jsonl` (sem concluir economia com menos de 10 respostas).
+- Fora desta etapa: voz neural (RVC) — depende de voz-alvo e pesos com licença própria e de um ambiente Python separado.

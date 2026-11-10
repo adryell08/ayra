@@ -1,4 +1,4 @@
-"""Folha para colar/digitar a chave da OpenAI ou do Gemini (aba Ajustes → API).
+"""Folha para colar/digitar a chave da OpenAI, do Gemini ou da ElevenLabs (aba Ajustes → API).
 
 A chave nunca aparece inteira: só pontos e os 4 últimos caracteres. Ctrl+V cola, Enter salva, Esc cancela.
 Enquanto a folha está aberta, nenhuma tecla vaza para os atalhos do app.
@@ -42,14 +42,14 @@ class KeyEntry:
         self.paste_btn = pygame.Rect(0, 0, 0, 0)
         self.cancel_btn = pygame.Rect(0, 0, 0, 0)
         self._pressed: Optional[str] = None
-        self.kind = "openai"                    # openai | gemini
+        self.kind = "openai"                    # openai | gemini | eleven
 
     @property
     def provider_name(self) -> str:
-        return "do Gemini" if self.kind == "gemini" else "da OpenAI"
+        return {"gemini": "do Gemini", "eleven": "da ElevenLabs"}.get(self.kind, "da OpenAI")
 
     def open(self, kind: str = "openai") -> None:
-        self.kind = kind if kind in ("openai", "gemini") else "openai"
+        self.kind = kind if kind in ("openai", "gemini", "eleven") else "openai"
         self.active, self.text, self.error = True, "", ""
         try:
             pygame.key.set_repeat(400, 35)
@@ -72,13 +72,13 @@ class KeyEntry:
             self.error = ""
         else:
             self.error = ("Área de transferência vazia. Copie a chave no " +
-                          ("Google AI Studio" if self.kind == "gemini" else "site da OpenAI") + " e tente de novo.")
+                          {"gemini": "Google AI Studio", "eleven": "site da ElevenLabs (Profile → API Keys)"}.get(self.kind, "site da OpenAI") + " e tente de novo.")
 
     def _submit(self) -> Optional[Tuple[str, str]]:
         key = self.text.strip()
         if not credenciais.looks_valid(key, self.kind):
             self.error = (f"Isso não parece uma chave {self.provider_name} (começa com "
-                          + ("AIza" if self.kind == "gemini" else "sk-") + " e não tem espaços).")
+                          + {"gemini": "AIza", "eleven": "sk_"}.get(self.kind, "sk-") + " e não tem espaços).")
             return None
         self.close()
         return ("save", key)
@@ -149,14 +149,14 @@ class KeyEntry:
         pygame.draw.rect(scr, sc.palette["red"] if self.error else sc.palette["blue"], field, max(2, int(2 * s)),
                          border_radius=int(12 * s))
         shown = self.masked()
-        t = r._text("body", shown if shown else ("AIza…" if self.kind == "gemini" else "sk-…"),
+        t = r._text("body", shown if shown else {"gemini": "AIza…", "eleven": "sk_…"}.get(self.kind, "sk-…"),
                     sc.text if shown else sc.text_dim)
         scr.blit(t, (field.x + pad, field.centery - t.get_height() // 2))
         if shown:
             caret = r._text("body", "|", sc.text)
             scr.blit(caret, (field.x + pad + t.get_width() + 2, field.centery - caret.get_height() // 2))
         y = field.bottom + int(8 * s)
-        var = "GEMINI_API_KEY" if self.kind == "gemini" else "OPENAI_API_KEY"
+        var = {"gemini": "GEMINI_API_KEY", "eleven": "ELEVENLABS_API_KEY"}.get(self.kind, "OPENAI_API_KEY")
         note = self.error or (f"Atenção: a variável {var} do Windows tem prioridade sobre o .env."
                               if source == "windows" else f"{len(self.text)} caracteres" if self.text else "")
         if note:

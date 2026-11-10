@@ -19,7 +19,10 @@ MODELS = {
                 "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186"),
     "smile": ("facial_expression_recognition/facial_expression_recognition_mobilefacenet_2022july.onnx",
               "4f61307602fc089ce20488a31d4e4614e3c9753a7d6c41578c854858b183e1a9"),
+    "faces": ("face_recognition_sface/face_recognition_sface_2021dec.onnx",
+              "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"),   # SFace, ~37 MB
 }
+MAX_BYTES = {"faces": 45_000_000}
 BASE = "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/"
 
 
@@ -37,8 +40,9 @@ def install(kind, opener=urllib.request.urlopen):
         return
     remote, digest = MODELS[kind]
     with opener(BASE + remote, timeout=30) as response:
-        data = response.read(20_000_001)
-    if len(data) > 20_000_000 or hashlib.sha256(data).hexdigest() != digest:
+        limit = MAX_BYTES.get(kind, 20_000_000)
+        data = response.read(limit + 1)
+    if len(data) > limit or hashlib.sha256(data).hexdigest() != digest:
         raise ValueError(f"Modelo {kind}: hash inválido; arquivo não instalado.")
     ROOT.mkdir(parents=True, exist_ok=True)
     partial = model_path(kind).with_suffix(".part")

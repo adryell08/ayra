@@ -115,6 +115,7 @@ def test_server():
     srv = operador.OperatorServer(scene, lambda: dict(estado="idle", modo="autonomo", visao=True),
                                   lambda pcm: received_audio.append(pcm), port=18765, pin="123456", use_tls=False,
                                   mic_factory=mic_factory)
+    srv.drop_grace = 0.5
     check("servidor sobe na rede local", srv.start() and srv.status == "aguardando operador")
     check("endereço para o operador", srv.url.startswith("http://") and srv.url.endswith(":18765"))
 
@@ -140,7 +141,7 @@ def test_server():
         async with aiohttp.ClientSession() as http:
             async with http.get("http://127.0.0.1:18765/") as r:
                 page = await r.text()
-                result["page"] = r.status == 200 and "Sala do operador" in page
+                result["page"] = r.status == 200 and "Sala do Operador" in page
             pc = RTCPeerConnection()
             dc = pc.createDataChannel("controle")
             msgs = []
@@ -211,6 +212,7 @@ def test_server():
         pcm = received_audio[-1]
         check("voz do operador chega convertida para 24 kHz mono", pcm.dtype == np.int16 and 400 <= len(pcm) <= 520
               and np.abs(pcm).max() > 1000)
+    wait(lambda: srv.operator == "", srv.drop_grace + 3)         # a saída só é anunciada depois da tolerância de queda
     cmds = []
     while not srv.commands.empty():
         cmds.append(srv.commands.get())
@@ -265,6 +267,7 @@ def test_modes():
     time.sleep(0.3)                                       # o envio é assíncrono: espera a fila de saída esvaziar
     n_create = len(h.sent("response.create"))
     a.robot_voice = True
+    a.voice_mask.warm()                                   # o app faz isto ao ligar a voz robótica (warm_async); aqui, síncrono para o tempo do teste
     a.operator_say("Olá, eu sou a Ayra.")
     spoke = h.wait(lambda: a.state == "speaking", 3)
     extra = len(h.sent("response.create")) - n_create
@@ -301,7 +304,7 @@ def test_modes():
 
 
 def test_badge_toggle():
-    print("Aviso na tela (liga/desliga)")
+    print("Aviso público do operador removido (a tela do robô não mostra presença)")
     import menu
     import theme
     from renderer import HudInfo
@@ -309,12 +312,8 @@ def test_badge_toggle():
     hud = HudInfo()
     m.activate("remote")
     hud.remote = dict(enabled=True, operator="Ana")
-    item = [i for i in m.items(hud, theme.SCHEMES["dark"]) if i[0] == "remote:badge"]
-    check("item 'Aviso na tela' na aba Controle remoto, ligado por padrão", len(item) == 1 and item[0][3] == "on")
-    hud.remote["badge"] = False
-    item = [i for i in m.items(hud, theme.SCHEMES["dark"]) if i[0] == "remote:badge"]
-    check("desligado aparece como off", item[0][3] == "off")
-    check("tocar mantém a aba aberta", m.activate("remote:badge") == (True, "remote:badge") and m.view == "remote")
+    check("não há mais item de barra 'Operador conectado' nos Ajustes",
+          not [i for i in m.items(hud, theme.SCHEMES["dark"]) if i[0] == "remote:badge"])
 
 
 def test_app_smoke():

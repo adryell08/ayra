@@ -3,421 +3,559 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0c0e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f2ed" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171c1e" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Ayra · Sala do operador</title>
+<title>Ayra - Sala do Operador</title>
 <style>
   :root {
-    --bg: #f2f2f7; --card: #ffffff; --text: #111216; --dim: #5b5e66; --line: #d9dadf;
-    --blue: #0a6cff; --green: #1f9d48; --red: #e5363d; --orange: #c75400; --chip: #eceef2;
-    --radius: 18px; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+    --bg: #f4f2ed; --card: #ffffff; --text: #171c1e; --dim: #4f5558; --line: #cfcabd; --chip: #e9e6df;
+    --blue: #17636a; --green: #1b7a3e; --red: #b3261e; --orange: #8f4700;
+    --radius: 16px; --shadow: 0 1px 2px rgba(23,28,30,.08), 0 6px 18px rgba(23,28,30,.06);
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0b0c0e; --card: #1c1c1e; --text: #f5f5f7; --dim: #b8b8c0; --line: #3a3a3f;
-            --blue: #0a84ff; --green: #30d158; --red: #ff453a; --orange: #ff9f0a; --chip: #2c2c2e;
-            --shadow: none; }
+    :root { --bg: #171c1e; --card: #20272a; --text: #f1efe9; --dim: #aab2b5; --line: #3b464a; --chip: #2b3438;
+            --blue: #89c5c8; --green: #6fd08c; --red: #ff8a80; --orange: #ffb74d; --shadow: none; }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html { -webkit-text-size-adjust: 100%; }
-  html, body { margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif; }
-  button, input, textarea { font: inherit; color: inherit; }
-  button { touch-action: manipulation; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 14px 20px; position: sticky; top: 0; z-index: 2;
-    background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(16px); }
-  h1 { font-size: 22px; margin: 0; letter-spacing: -.02em; }
-  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
-    background: var(--chip); font-weight: 600; font-size: 13px; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); }
-  .dot.ok { background: var(--green); } .dot.warn { background: var(--orange); } .dot.err { background: var(--red); }
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; padding: 0 20px 24px; max-width: 1280px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); margin: 0 0 10px; }
-  .stack { display: grid; gap: 16px; align-content: start; }
-  #videoBox { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 4/3; cursor: crosshair; }
-  #video { width: 100%; height: 100%; object-fit: contain; display: block; }
-  #videoHint { position: absolute; left: 12px; bottom: 12px; padding: 6px 10px; border-radius: 10px;
-    background: rgba(0,0,0,.55); color: #fff; font-size: 12px; }
-  #rec { position: absolute; left: 12px; top: 12px; display: none; }
-  #lookMark { position: absolute; width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%;
-    transform: translate(-50%,-50%); pointer-events: none; opacity: 0; transition: opacity .6s; }
-  .seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--chip); border-radius: 12px; padding: 3px; gap: 3px; }
-  .seg button { border: 0; background: transparent; border-radius: 10px; padding: 10px 6px; font-weight: 600; min-height: 44px; cursor: pointer; }
-  .seg button[aria-pressed="true"] { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
-  .modeHelp { color: var(--dim); font-size: 13px; margin: 8px 2px 0; }
-  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .btn { border: 0; border-radius: 12px; min-height: 44px; padding: 8px 10px; background: var(--chip); font-weight: 600; cursor: pointer; }
-  .btn:active { transform: scale(.98); }
-  .btn.primary { background: var(--blue); color: #fff; }
-  .btn.danger { background: var(--red); color: #fff; }
-  .btn:disabled { opacity: .45; cursor: not-allowed; }
-  #talkBar { display: flex; gap: 10px; }
-  #talk { flex: 1; min-height: 64px; font-size: 18px; border-radius: 999px; user-select: none; -webkit-user-select: none;
-    -webkit-touch-callout: none; touch-action: none; }
-  #stopBar { display: none; }
-  #talk.live { background: var(--red); }
-  #talk.locked { background: var(--green); }
-  #lockHint { position: absolute; left: 50%; transform: translate(-50%, -100%); top: -6px; white-space: nowrap;
-    padding: 6px 12px; border-radius: 999px; background: var(--chip); font-size: 13px; font-weight: 600;
-    opacity: 0; pointer-events: none; transition: opacity .15s; }
-  #lockHint.show { opacity: 1; }
-  #talkBar { position: relative; }
-  .row { display: flex; gap: 8px; align-items: center; }
-  textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; padding: 10px;
-    background: transparent; font-size: 16px; }
-  .toggle { display: flex; justify-content: space-between; align-items: center; min-height: 44px; }
-  .switch { width: 51px; height: 31px; border-radius: 999px; background: var(--line); border: 0; position: relative; cursor: pointer; flex: none; }
-  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
-  .switch[aria-checked="true"] { background: var(--green); }
-  .switch[aria-checked="true"]::after { transform: translateX(20px); }
-  .toggle > span { flex: 1; cursor: pointer; padding: 10px 12px 10px 0; }   /* toque no texto também alterna (alvo ≥ 44 pt) */
-  .meter { height: 8px; border-radius: 4px; background: var(--chip); overflow: hidden; flex: 1; }
-  .meter > i { display: block; height: 100%; width: 0; background: var(--green); transition: width .08s; }
-  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 14px; }
-  .kv dt { color: var(--dim); } .kv dd { margin: 0; overflow-wrap: anywhere; }
-  #login { max-width: 420px; margin: 10vh auto; }
-  #login input { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; background: transparent; font-size: 20px; letter-spacing: .3em; text-align: center; }
-  #login input#nome { letter-spacing: normal; font-size: 16px; text-align: left; }
-  .error { color: var(--red); min-height: 1.4em; }
+  html { -webkit-text-size-adjust: 100%; height: 100%; overflow: hidden; }
+  body { height: 100dvh; margin: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  button { touch-action: manipulation; cursor: pointer; }
+  svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .hidden { display: none !important; }
-  @media (hover: none) { .mouse { display: none; } }
-  @media (hover: hover) { .touch { display: none; } }
-  /* Celular: uma coluna na ordem de uso, ação principal no alcance do polegar (barra fixa embaixo). */
+
+  header { flex: none; display: flex; align-items: center; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border-radius: 999px; background: var(--chip);
+    font-weight: 600; font-size: 13px; color: var(--text); text-decoration: none; border: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.ok { background: var(--green); } .dot.warn { background: var(--orange); border-radius: 2px; } .dot.err { background: var(--red); border-radius: 2px; transform: rotate(45deg); }
+
+  #login { max-width: 420px; width: calc(100% - 28px); margin: 8vh auto 0; padding: 18px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); }
+  #login h2 { margin: 0 0 6px; font-size: 18px; }
+  #login p { margin: 0 0 12px; color: var(--dim); }
+  #login input { width: 100%; min-height: 48px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 14px; background: transparent; font-size: 16px; }
+  #login input#pin { font-size: 20px; letter-spacing: .3em; text-align: center; }
+  .error { color: var(--red); min-height: 1.4em; margin-top: 8px; }
+  .btn { border: 0; border-radius: 12px; min-height: 44px; padding: 6px 10px; background: var(--chip); font-weight: 600; }
+  .btn:active, .ibtn:active { transform: scale(.97); }
+  .btn.primary, .ibtn.primary { background: var(--blue); color: #fff; }
+  @media (prefers-color-scheme: dark) { .btn.primary, .ibtn.primary { color: #0e1416; } }
+  .btn:disabled, .ibtn:disabled { opacity: .45; cursor: not-allowed; }
+
+  #app { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(190px, 1fr) minmax(0, 2.3fr) minmax(220px, 1.05fr); gap: 12px;
+    padding: 0 max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
+  .col { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+  .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 0; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; min-height: 44px; }
+  .close { display: none; }
+
+  .switch { position: relative; width: 52px; min-height: 44px; border: 0; background: transparent; flex: none; }
+  .switch::before { content: ""; position: absolute; left: 3px; top: 50%; width: 46px; height: 26px; margin-top: -13px; border-radius: 999px; background: var(--line); border: 1px solid var(--dim); }
+  .switch::after { content: ""; position: absolute; left: 6px; top: 50%; width: 20px; height: 20px; margin-top: -10px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: transform .18s; }
+  .switch[aria-checked="true"]::before { background: var(--green); border-color: var(--green); }
+  .switch[aria-checked="true"]::after { transform: translateX(22px); }
+
+  .grid { display: grid; gap: 6px; }
+  #gestures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #expr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #expr .btn, #gestures .btn { font-size: 13px; padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: var(--dim); }
+  .field select { flex: 1; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 0 8px; color: var(--text); }
+  .grid[aria-disabled="true"] { opacity: .45; }
+
+  #center { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  #videoBox { position: relative; flex: 1; min-height: 0; background: #000; border-radius: var(--radius); overflow: hidden; cursor: crosshair; }
+  #video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #rec { position: absolute; left: 10px; top: 10px; min-height: 0; padding: 4px 10px; background: rgba(0,0,0,.6); color: #fff; font-size: 12px; }
+  #lookMark { position: absolute; width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none; opacity: 0; transition: opacity .6s; }
+  .opener { display: none; position: absolute; bottom: 8px; background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 12px; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+  #openLeft { left: 8px; } #openRight { right: 8px; }
+
+  #strip { flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .ibtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border: 0; border-radius: 14px; background: var(--chip); font-weight: 600; }
+  .ibtn.big { min-width: 52px; min-height: 52px; border-radius: 999px; }
+  .ibtn[aria-pressed="true"], .ibtn[aria-checked="true"] { background: var(--blue); color: #fff; box-shadow: inset 0 0 0 2px var(--text); }
+  @media (prefers-color-scheme: dark) { .ibtn[aria-pressed="true"], .ibtn[aria-checked="true"] { color: #0e1416; } }
+  .ibtn.danger { background: var(--red); color: #fff; }
+  @media (prefers-color-scheme: dark) { .ibtn.danger { color: #0e1416; } }
+  #talk { min-width: 64px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
+  #talk.locked { background: var(--green); color: #fff; }
+  #lockHint { font-size: 12px; color: var(--dim); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cap { font-size: 13px; }
+
+  #talkCard { position: relative; flex: none; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row label { flex: none; width: 64px; font-size: 13px; color: var(--dim); }
+  .row input[type=text] { flex: 1; min-width: 0; min-height: 44px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; background: transparent; }
+  #talkCard .row + .row { margin-top: 6px; }
+  #alert { position: absolute; right: 10px; top: -10px; max-width: 70%; padding: 4px 10px; border-radius: 999px; background: var(--orange); color: #fff; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (prefers-color-scheme: dark) { #alert { color: #0e1416; } }
+
+  .wave { display: flex; align-items: center; gap: 8px; }
+  .wave b { flex: none; width: 92px; font-size: 13px; }
+  .wave canvas { flex: 1; min-width: 0; height: 34px; border-radius: 8px; background: var(--chip); }
+  .wave .ind { width: 22px; height: 22px; color: var(--dim); }
+  .wave .ind.on { color: var(--red); }
+  .wave + .wave { margin-top: 6px; }
+  .robotRow { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-height: 44px; }
+  .robotRow input[type=range] { flex: 1; min-width: 0; min-height: 44px; accent-color: var(--blue); }
+  .robotRow output { width: 48px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  #voiceNote { margin: 4px 0 0; font-size: 12px; color: var(--dim); }
+  #voiceNote.bad { color: var(--red); font-weight: 600; }
+
+  #stateBar { flex: none; display: flex; align-items: center; gap: 14px; margin: 0 max(14px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+    padding: 8px 14px; min-height: 44px; border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); font-size: 13px; overflow: hidden; }
+  #stateBar .lbl { font-weight: 800; letter-spacing: .08em; color: var(--dim); flex: none; }
+  #stateBar .it { min-width: 0; display: flex; gap: 6px; }
+  #stateBar .it span:first-child { color: var(--dim); flex: none; }
+  #stateBar .it span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #stateBar .grow { flex: 1; }
+
+  @media (max-width: 1100px) { #app { grid-template-columns: minmax(170px, 1fr) minmax(0, 2fr) minmax(200px, 1fr); gap: 10px; } .minor { display: none !important; } }
+
+  /* Celular/tablet em pé: só o centro; gestos e voz/expressões abrem por cima. */
   @media (max-width: 900px) {
-    header { padding: calc(10px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 10px max(16px, env(safe-area-inset-left)); }
-    h1 { font-size: 17px; }
-    main { display: flex; flex-direction: column; gap: 12px;
-      padding: 0 max(12px, env(safe-area-inset-right)) calc(100px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-    .stack { display: contents; }
-    #videoBox { order: 1; } .c-mode { order: 2; } .c-say { order: 3; } .c-gest { order: 4; } .c-expr { order: 5; }
-    .c-voice { order: 6; } .c-toggles { order: 7; } .c-state { order: 8; }
-    .card { padding: 14px; }
-    .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .btn { font-size: 14px; }
-    #talkBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; align-items: center;
-      padding: 10px max(12px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-      background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%); border-top: .5px solid var(--line); }
-    #talk { min-height: 56px; font-size: 17px; }
-    #stopBar { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 56px; height: 56px;
-      min-height: 56px; border-radius: 50%; padding: 0; }
-    #login { margin: 6vh max(16px, env(safe-area-inset-left)); }
-    #stop { display: none; }                                   /* no celular, o Interromper fica na barra de baixo */
+    h1 { font-size: 16px; }
+    #app { display: block; position: relative; padding-bottom: 6px; }
+    #center { height: 100%; }
+    .col { position: fixed; left: 0; right: 0; bottom: 0; top: 12dvh; z-index: 20; padding: 12px max(14px, env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+      background: var(--bg); border-radius: 20px 20px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.35); transform: translateY(105%); visibility: hidden; transition: transform .22s, visibility .22s; }
+    .col.open { transform: none; visibility: visible; }
+    .close { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; border: 0; border-radius: 12px; background: var(--chip); }
+    .opener { display: inline-flex; }
+    #scrim { display: none; position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.45); }
+    #app:has(.col.open) ~ #scrim { display: block; }
+    .cap { display: none; }
+    #stateBar { gap: 8px; padding: 6px 10px; }
+    #stateBar .grow2 { display: none; }
   }
-  @media (max-width: 370px) {
-    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .seg button { font-size: 13px; padding: 10px 2px; }
+  @media (max-width: 420px) { .ibtn { padding: 0 8px; } #strip { gap: 6px; } #lockHint { display: none; } .row label { width: 52px; } }
+  /* Celular deitado: vídeo à esquerda, controles à direita. */
+  @media (max-height: 520px) and (orientation: landscape) {
+    #center { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); grid-template-rows: auto 1fr; gap: 8px; }
+    #videoBox { grid-column: 1; grid-row: 1 / span 2; }
+    #strip { grid-column: 2; grid-row: 1; flex-wrap: wrap; }
+    #talkCard { grid-column: 2; grid-row: 2; padding: 6px 8px; overflow: auto; }
+    header { padding-top: calc(2px + env(safe-area-inset-top)); padding-bottom: 2px; }
+    h1 { font-size: 15px; }
+    .pill { min-height: 44px; }
+    #stateBar { min-height: 44px; padding: 2px 10px; margin-bottom: calc(4px + env(safe-area-inset-bottom)); }
   }
-  /* Celular deitado: vídeo fixo à esquerda, controles rolando à direita. */
-  @media (max-width: 950px) and (orientation: landscape) and (max-height: 520px) {
-    main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
-    #videoBox { grid-column: 1; grid-row: 1 / span 9; position: sticky; top: 60px; }
-    .stack > .card { grid-column: 2; }
-    #talkBar { left: 50%; }
-  }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
-.toggle.slider{flex-wrap:wrap;gap:6px 12px}.toggle.slider output{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dim,#888)}.toggle.slider input[type=range]{flex:1 1 100%;min-height:44px;accent-color:var(--accent,#0a84ff)}
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>Ayra · Sala do operador</h1>
-  <a class="pill" href="/memoria" target="_blank" style="text-decoration:none;color:inherit;margin-left:auto">Memória</a>
-  <span class="pill"><span class="dot" id="connDot"></span><span id="connText">Desconectado</span></span>
+  <h1>Ayra - Sala do Operador</h1>
+  <a class="pill" href="/memoria" target="_blank" rel="noopener">Memória</a>
+  <span class="pill" id="conn"><span class="dot" id="connDot"></span><span id="connText">Sem conexão</span>
+    <button class="btn hidden" id="retry" type="button" style="min-height:44px;margin-right:-8px">Tentar agora</button></span>
 </header>
 
-<section id="login" class="card">
+<section id="login">
   <h2>Entrar</h2>
-  <p style="margin-top:0;color:var(--dim)">Digite o PIN que aparece no robô em <b>Ajustes → Controle remoto</b>.</p>
-  <div class="stack" style="gap:10px">
-    <input id="nome" placeholder="Seu nome (opcional)" autocomplete="name">
-    <input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
-    <button class="btn primary" id="enter">Conectar</button>
-    <div class="error" id="loginError"></div>
-  </div>
+  <p>Digite o PIN que aparece no robô em <b>Ajustes → Controle remoto</b>.</p>
+  <input id="nome" placeholder="Seu nome (opcional)" autocomplete="name" aria-label="Seu nome">
+  <input id="pin" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code" aria-label="PIN de 6 dígitos">
+  <button class="btn primary" id="enter" type="button" style="width:100%">Conectar</button>
+  <div class="error" id="loginError" role="alert"></div>
 </section>
 
 <main id="app" class="hidden">
-  <div class="stack">
+  <aside class="col" id="colLeft" aria-label="Gestos">
+    <section class="card">
+      <div class="head"><h2>Gestos (3D)</h2>
+        <button class="switch" id="body3d" type="button" role="switch" aria-checked="false" aria-label="Corpo 3D"></button>
+        <button class="close" type="button" aria-label="Fechar painel" data-close="colLeft"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="field"><label for="gside">Braço</label>
+        <select id="gside"><option value="direito">Direito</option><option value="esquerdo">Esquerdo</option></select></div>
+      <div class="grid" id="gestures">
+        <button class="btn" type="button" data-g="tchau">Tchau</button>
+        <button class="btn" type="button" data-g="joia">Joia</button>
+        <button class="btn" type="button" data-g="dedo_do_meio">Dedo do meio</button>
+        <button class="btn" type="button" data-g="apontar">Apontar</button>
+        <button class="btn" type="button" data-g="paz">Paz e amor</button>
+        <button class="btn" type="button" data-g="ok">OK</button>
+        <button class="btn" type="button" data-g="aplaudir">Aplaudir</button>
+        <button class="btn" type="button" data-g="encolher_ombros">Encolher ombros</button>
+        <button class="btn" type="button" data-g="comemorar">Comemorar</button>
+        <button class="btn" type="button" data-g="continencia">Continência</button>
+        <button class="btn" type="button" data-g="pensar">Pensar</button>
+        <button class="btn" type="button" data-g="sim">Sim (cabeça)</button>
+        <button class="btn" type="button" data-g="nao">Não (cabeça)</button>
+      </div>
+    </section>
+  </aside>
+
+  <section id="center" aria-label="Conversa">
     <div id="videoBox" title="Toque ou clique para a Ayra olhar para esse ponto">
       <video id="video" autoplay playsinline muted></video>
-      <span class="pill" id="rec"><span class="dot err"></span><span id="fpsText">AO VIVO · 10 FPS</span></span>
+      <span class="pill" id="rec"><span id="fpsText">AO VIVO</span></span>
       <span id="lookMark"></span>
-      <span id="videoHint"><span class="mouse">Clique</span><span class="touch">Toque</span> na imagem para a Ayra olhar para lá</span>
+      <button class="opener" id="openLeft" type="button" aria-label="Abrir gestos" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 12V5a1.5 1.5 0 0 1 3 0v6m0-1V4a1.5 1.5 0 0 1 3 0v7m0-5a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-3-4a1.5 1.5 0 0 1 2.4-1.8L8 14"/></svg></button>
+      <button class="opener" id="openRight" type="button" aria-label="Abrir voz e expressões" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></button>
     </div>
+    <div id="strip" role="group" aria-label="Controles">
+      <button class="ibtn" id="modeToggle" type="button" role="switch" aria-checked="false" aria-label="Modo autônomo: a IA conversa"></button>
+      <button class="ibtn" id="assist" type="button" aria-pressed="false" aria-label="Modo assistido"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M18 14a6 6 0 0 1 3 6"/></svg><span class="cap">Assistido</span></button>
+      <button class="ibtn" id="vision" type="button" role="switch" aria-checked="true" aria-label="Visão da IA ligada"></button>
+      <button class="ibtn big" id="talk" type="button" aria-pressed="false" aria-label="Segure para falar"></button>
+      <button class="ibtn danger" id="stop" type="button" aria-label="Parar a Ayra"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></svg></button>
+      <span id="lockHint">Segure para falar · deslize para cima ou T para travar</span>
+    </div>
+    <section class="card" id="talkCard">
+      <div id="alert" role="status" aria-live="polite" class="hidden"></div>
+      <div class="row"><label for="sayText">Ayra diz:</label>
+        <input type="text" id="sayText" placeholder="Digite uma frase..." enterkeyhint="send" autocomplete="off">
+        <button class="ibtn primary" id="say" type="button" aria-label="Enviar frase"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l16-8-6 16-3-6-7-2z"/></svg></button></div>
+      <div class="row"><label for="instrText">Instrução</label>
+        <input type="text" id="instrText" placeholder="A IA lembra até ser revogada" autocomplete="off">
+        <button class="ibtn" id="instr" type="button" aria-label="Registrar instrução"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11l3 3v13H5zM8 12h8M8 16h5"/></svg></button></div>
+    </section>
     <audio id="robotAudio" autoplay></audio>
-    <div class="card c-mode">
-      <h2>Modo de controle</h2>
-      <div class="seg" role="group" aria-label="Modo">
-        <button data-mode="autonomo" aria-pressed="true">Autônomo</button>
-        <button data-mode="assistido" aria-pressed="false">Assistido</button>
-        <button data-mode="teleoperado" aria-pressed="false">Teleoperado</button>
-      </div>
-      <p class="modeHelp" id="modeHelp"></p>
-    </div>
-    <div class="card c-expr">
-      <h2>Expressões</h2>
+  </section>
+
+  <aside class="col" id="colRight" aria-label="Voz e expressões">
+    <section class="card">
+      <div class="head"><h2>Áudio</h2>
+        <button class="close" type="button" aria-label="Fechar painel" data-close="colRight"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="wave"><b>Teleoperador</b><span class="ind" id="micInd" role="img" aria-label="Seu microfone está desligado"></span><canvas id="micWave" aria-hidden="true"></canvas></div>
+      <div class="wave"><b>Usuário</b><canvas id="robotWave" aria-hidden="true"></canvas></div>
+      <div class="robotRow"><span id="robotIcon" aria-hidden="true"></span>
+        <label class="sr" for="robotLevel">Voz artificial (0 a 100 %)</label>
+        <input type="range" id="robotLevel" min="0" max="100" step="5" value="0" aria-valuetext="0 %">
+        <output id="robotVal" for="robotLevel">0 %</output></div>
+      <p id="voiceNote"></p>
+      <p id="voiceDiag" class="sr"></p>
+    </section>
+    <section class="card">
+      <div class="head"><h2>Expressões / Olhos (2D)</h2>
+        <button class="switch" id="eyes2d" type="button" role="switch" aria-checked="true" aria-label="Olhos 2D"></button></div>
       <div class="grid" id="expr">
-        <button class="btn" data-e="auto">Automático</button>
-        <button class="btn" data-e="happy">Feliz</button>
-        <button class="btn" data-e="sad">Triste</button>
-        <button class="btn" data-e="angry">Bravo</button>
-        <button class="btn" data-e="surprised">Surpreso</button>
-        <button class="btn" data-e="wide">Curioso</button>
-        <button class="btn" data-e="sleepy">Sonolento</button>
-        <button class="btn" data-e="wink">Piscadela</button>
-        <button class="btn" data-e="cry">Chorar</button>
-        <button class="btn" data-e="plead">Súplica</button>
-        <button class="btn" data-e="blink">Piscar</button>
-        <button class="btn" data-e="center">Olhar à frente</button>
+        <button class="btn" type="button" data-e="auto">Auto</button>
+        <button class="btn" type="button" data-e="happy">Feliz</button>
+        <button class="btn" type="button" data-e="sad">Triste</button>
+        <button class="btn" type="button" data-e="angry">Bravo</button>
+        <button class="btn" type="button" data-e="surprised">Surpreso</button>
+        <button class="btn" type="button" data-e="wide">Curioso</button>
+        <button class="btn" type="button" data-e="sleepy">Sonolento</button>
+        <button class="btn" type="button" data-e="wink">Piscadela</button>
+        <button class="btn" type="button" data-e="cry">Chorar</button>
+        <button class="btn" type="button" data-e="plead">Súplica</button>
+        <button class="btn" type="button" data-e="blink">Piscar</button>
+        <button class="btn" type="button" data-e="center">Centro</button>
       </div>
-    </div>
-    <div class="card c-gest">
-      <h2>Gestos (corpo 3D)</h2>
-      <div class="grid" id="gestures">
-        <button class="btn" data-g="tchau">Tchau</button>
-        <button class="btn" data-g="joia">Joia</button>
-        <button class="btn" data-g="dedo_do_meio">Dedo do meio</button>
-        <button class="btn" data-g="apontar">Apontar</button>
-        <button class="btn" data-g="paz">Paz e amor</button>
-        <button class="btn" data-g="ok">OK</button>
-        <button class="btn" data-g="aplaudir">Aplaudir</button>
-        <button class="btn" data-g="encolher_ombros">Encolher ombros</button>
-        <button class="btn" data-g="comemorar">Comemorar</button>
-        <button class="btn" data-g="continencia">Continência</button>
-        <button class="btn" data-g="pensar">Pensar</button>
-        <button class="btn" data-g="sim">Sim (cabeça)</button>
-        <button class="btn" data-g="nao">Não (cabeça)</button>
-      </div>
-      <p class="modeHelp" id="bodyHelp">Os gestos aparecem quando o corpo 3D está ligado.</p>
-    </div>
-  </div>
-
-  <div class="stack">
-    <div class="card c-voice">
-      <h2>Sua voz</h2>
-      <div id="talkBar">
-        <span id="lockHint">↑ Deslize para travar (conversa livre)</span>
-        <button class="btn primary" id="talk">Segure para falar</button>
-        <button class="btn danger" id="stopBar" aria-label="Interromper a Ayra">
-          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="2.5" fill="currentColor"/></svg>
-        </button>
-      </div>
-      <div class="row" style="margin-top:10px"><span style="font-size:13px;color:var(--dim);width:90px">Seu microfone</span><div class="meter"><i id="micMeter"></i></div></div>
-      <div class="row" style="margin-top:6px"><span style="font-size:13px;color:var(--dim);width:90px">Áudio do robô</span><div class="meter"><i id="robotMeter"></i></div></div>
-      <p class="modeHelp">Segure para falar ou <b>deslize para cima para travar</b> (como no WhatsApp): vira uma ligação,
-        as duas pontas falam ao mesmo tempo. <span class="mouse">Atalhos: segure Espaço; T trava/destrava. </span>A Ayra mexe a boca com a sua voz.</p>
-    </div>
-    <div class="card c-say">
-      <h2>A Ayra diz</h2>
-      <textarea id="sayText" placeholder="Digite uma frase…"></textarea>
-      <div class="row" style="margin-top:8px">
-        <button class="btn primary" id="say" style="flex:1">Falar frase</button>
-        <button class="btn danger" id="stop">Interromper</button>
-      </div>
-      <button class="btn" id="instr" style="margin-top:8px;width:100%">Registrar como instrução (a IA lembra até ser revogada)</button>
-      <p class="modeHelp" id="sayHelp"></p>
-    </div>
-    <div class="card c-toggles">
-      <div class="toggle"><span>Visão da IA (enviar imagem)</span><button class="switch" id="vision" role="switch" aria-checked="true"></button></div>
-      <div class="toggle slider"><span>Voz robótica (IA e operador iguais)</span><output id="robotVal">0 %</output>
-        <input type="range" id="robotLevel" min="0" max="100" step="5" value="0" aria-label="Grau da voz robótica"></div>
-      <div class="toggle"><span>Corpo 3D (gestos com braços e mãos)</span><button class="switch" id="body3d" role="switch" aria-checked="false"></button></div>
-    </div>
-    <div class="card c-state">
-      <h2>Estado</h2>
-      <dl class="kv">
-        <dt>Ayra</dt><dd id="st">—</dd>
-        <dt>Pergunta</dt><dd id="q">—</dd>
-        <dt>Resposta</dt><dd id="a">—</dd>
-        <dt>Expressão</dt><dd id="emo">—</dd>
-        <dt>Gesto</dt><dd id="gest">—</dd>
-        <dt>Áudio</dt><dd id="audioInfo">—</dd>
-        <dt>Rostos</dt><dd id="faces">—</dd>
-        <dt>Latência</dt><dd id="rtt">—</dd>
-      </dl>
-    </div>
-  </div>
+    </section>
+  </aside>
 </main>
+<div id="scrim"></div>
 
+<footer id="stateBar" class="hidden" aria-label="Estado da Ayra">
+  <span class="lbl">ESTADO</span>
+  <span class="it"><span>Ayra</span><span id="st">—</span></span>
+  <span class="it grow"><span>Pergunta</span><span id="q">—</span></span>
+  <span class="it grow"><span>Resposta</span><span id="a">—</span></span>
+  <span class="it grow2 minor"><span>Expressão</span><span id="emo">—</span></span>
+  <span class="it grow2 minor"><span>Gesto</span><span id="gest">—</span></span>
+  <span class="it grow2 minor"><span>Áudio</span><span id="audioInfo">—</span></span>
+  <span class="it grow2 minor"><span>Rostos</span><span id="faces">—</span></span>
+  <span class="it grow2 minor"><span>Latência</span><span id="rtt">—</span></span>
+</footer>
+
+<script src="/static/reconect.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const MODE_HELP = {
-  autonomo: "A IA conversa sozinha. Você assiste e pode intervir com expressões, olhar e frases.",
-  assistido: "A IA conversa; suas frases saem pela voz da IA e sua voz ao vivo interrompe a resposta.",
-  teleoperado: "A IA fica em silêncio. Só você fala pela Ayra (voz ao vivo ou frase digitada, voz local gratuita).",
+const ICONS = {
+  eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A9.7 9.7 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 4M6.5 6.5A17 17 0 0 0 2 12s4 7 10 7a9.6 9.6 0 0 0 4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+  micOff: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M9 9v2a3 3 0 0 0 5 2.2M15 9.3V6a3 3 0 0 0-5.7-1.3M5 11a7 7 0 0 0 11 5.7M19 11a7 7 0 0 1-.6 2.8M12 18v3"/></svg>',
+  joystick: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="6" r="3"/><path d="M12 9v7M5 20h14M7 20v-2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2"/></svg>',
+  robot: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4M9 13h.01M15 13h.01M9 16.5h6M3 13v3M21 13v3"/><circle cx="12" cy="3.5" r="1"/></svg>',
 };
+const MODE_NAMES = { autonomo: "Autônomo", assistido: "Assistido", teleoperado: "Teleoperador" };
 const STATE = { idle: "Pronta", connecting: "Conectando…", listening: "Ouvindo", capturing: "Capturando imagem",
   thinking: "Pensando", speaking: "Falando", error: "Erro" };
-let pc = null, dc = null, micTrack = null, pttOn = false, mode = "autonomo", rtt = null;
+let pc = null, dc = null, micStream = null, micTrack = null, pttOn = false, pttLocked = false, pttStartY = null, pttTail = null;
+let mode = "autonomo", rtt = null, everConnected = false, robotDrag = false, robotLast = 0, rc = null, lastOpener = null;
+const waves = { mic: { el: $("micWave"), an: null, vals: [] }, robot: { el: $("robotWave"), an: null, vals: [] } };
 
-function setConn(text, cls) { $("connText").textContent = text; $("connDot").className = "dot " + (cls || ""); }
-function send(obj) { if (dc && dc.readyState === "open") dc.send(JSON.stringify(obj)); }
+function isOn(el) { return el.getAttribute("aria-checked") === "true"; }
+function switchLabel(el, name, on) {            // nome acessível + estado; a forma (posição/ícone) já mostra o estado
+  el.setAttribute("aria-checked", String(!!on));
+  el.setAttribute("aria-label", name);
+}
+function controlIcon(el, icon, name, on, extra) {
+  el.innerHTML = ICONS[icon] + (extra ? '<span class="cap">' + extra + "</span>" : "");
+  switchLabel(el, name, on);
+}
+function drawControls() {
+  controlIcon($("modeToggle"), mode === "teleoperado" ? "joystick" : "robot",
+    mode === "teleoperado" ? "Modo teleoperador: você fala pela Ayra" : "Modo autônomo: a IA conversa", mode === "teleoperado",
+    mode === "teleoperado" ? "Teleoperador" : "Autônomo");
+  $("assist").setAttribute("aria-pressed", String(mode === "assistido"));
+  const v = isOn($("vision"));
+  controlIcon($("vision"), v ? "eye" : "eyeOff", v ? "Visão da IA ligada" : "Visão da IA desligada", v);
+  const on = pttOn;
+  $("talk").innerHTML = ICONS[on ? "mic" : "micOff"];
+  $("talk").setAttribute("aria-pressed", String(on));
+  $("talk").setAttribute("aria-label", pttLocked ? "Microfone travado; toque para soltar" : on ? "Falando; solte para parar" : "Segure para falar");
+  $("talk").classList.toggle("locked", pttLocked);
+  $("micInd").innerHTML = ICONS[on ? "mic" : "micOff"];
+  $("micInd").classList.toggle("on", on);
+  $("micInd").setAttribute("aria-label", on ? "Seu microfone está ligado" : "Seu microfone está desligado");
+  $("robotIcon").innerHTML = ICONS.robot;
+}
 
-function meter(stream, el) {
+function setConn(text, cls, title) { $("connText").textContent = text; $("connDot").className = "dot " + (cls || ""); $("conn").title = title || ""; }
+function send(obj) { return rc ? rc.envia(obj) : false; }
+function raw(obj) { if (dc && dc.readyState === "open") { dc.send(JSON.stringify(obj)); return true; } return false; }
+function showAlert(text) { const a = $("alert"); a.textContent = text || ""; a.classList.toggle("hidden", !text); }
+
+function meter(stream, w) {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const src = ctx.createMediaStreamSource(stream), an = ctx.createAnalyser();
-    an.fftSize = 512; src.connect(an);
-    const buf = new Uint8Array(an.fftSize);
-    (function tick() {
-      an.getByteTimeDomainData(buf);
-      let s = 0; for (const v of buf) { const d = (v - 128) / 128; s += d * d; }
-      el.style.width = Math.min(100, Math.sqrt(s / buf.length) * 400) + "%";
-      requestAnimationFrame(tick);
-    })();
+    an.fftSize = 512; src.connect(an); w.an = an; w.buf = new Uint8Array(an.fftSize);
   } catch (e) { /* medidor é opcional */ }
 }
+function drawWave(w) {
+  const c = w.el, W = c.clientWidth, H = c.clientHeight;
+  if (!W) return;
+  if (c.width !== W) c.width = W;
+  if (c.height !== H) c.height = H;
+  let lv = 0;
+  if (w.an) { w.an.getByteTimeDomainData(w.buf); let s = 0; for (const x of w.buf) { const d = (x - 128) / 128; s += d * d; } lv = Math.min(1, Math.sqrt(s / w.buf.length) * 4); }
+  w.vals.push(lv); if (w.vals.length > Math.floor(W / 4)) w.vals.shift();
+  const g = c.getContext("2d"), css = getComputedStyle(document.documentElement);
+  g.clearRect(0, 0, W, H); g.fillStyle = css.getPropertyValue("--blue").trim() || "#17636a";
+  w.vals.forEach((v, i) => { const h = Math.max(2, v * H); g.fillRect(W - (w.vals.length - i) * 4, (H - h) / 2, 3, h); });
+}
+setInterval(() => { if (!document.hidden) { drawWave(waves.mic); drawWave(waves.robot); } }, 66);   // ≈ 15 quadros/s; parado com a aba escondida
 
-async function connect() {
-  $("loginError").textContent = "";
-  const pin = $("pin").value.trim();
-  if (!/^\d{6}$/.test(pin)) { $("loginError").textContent = "O PIN tem 6 dígitos."; return; }
-  $("enter").disabled = true; setConn("Conectando…", "warn");
-  pc = new RTCPeerConnection();
-  dc = pc.createDataChannel("controle");
-  dc.onopen = () => { setConn("Conectado", "ok"); ping(); };
-  dc.onclose = () => setConn("Desconectado", "err");
-  dc.onmessage = (ev) => onMessage(JSON.parse(ev.data));
-  let micOk = false;
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-    micTrack = stream.getAudioTracks()[0]; micTrack.enabled = false;
-    pc.addTrack(micTrack, stream); meter(stream, $("micMeter")); micOk = true;
-  } catch (e) {
-    pc.addTransceiver("audio", { direction: "recvonly" });
-  }
-  pc.addTransceiver("video", { direction: "recvonly" });
-  pc.ontrack = (ev) => {
-    if (ev.track.kind === "video") { $("video").srcObject = new MediaStream([ev.track]); $("rec").style.display = "inline-flex"; }
-    else { const s = new MediaStream([ev.track]); $("robotAudio").srcObject = s; meter(s, $("robotMeter")); }
+function closePc() {
+  const old = pc; pc = null; dc = null;
+  if (old) { try { old.close(); } catch (e) { /* já fechada */ } }
+}
+
+async function conecta() {
+  closePc();
+  const p = new RTCPeerConnection(); pc = p;
+  const ch = p.createDataChannel("controle"); dc = ch;
+  if (micTrack) p.addTrack(micTrack, micStream); else p.addTransceiver("audio", { direction: "recvonly" });
+  p.addTransceiver("video", { direction: "recvonly" });
+  p.ontrack = (ev) => {
+    if (ev.track.kind === "video") { $("video").srcObject = new MediaStream([ev.track]); }
+    else { const s = new MediaStream([ev.track]); $("robotAudio").srcObject = s; meter(s, waves.robot); }
   };
-  pc.onconnectionstatechange = () => {
-    if (["failed", "disconnected", "closed"].includes(pc.connectionState)) setConn("Conexão perdida — recarregue a página", "err");
-  };
-  await pc.setLocalDescription(await pc.createOffer());
+  p.onconnectionstatechange = () => { if (p === pc && ["failed", "closed"].includes(p.connectionState)) rc.caiu("ice"); };
+  ch.onmessage = (ev) => { if (ch !== dc) return; rc.viuMensagem(); onMessage(JSON.parse(ev.data)); };
+  ch.onclose = () => { if (ch === dc) rc.caiu("canal"); };
+  await p.setLocalDescription(await p.createOffer());
   await new Promise((resolve) => {                       // rede local: candidatos saem em milissegundos
-    if (pc.iceGatheringState === "complete") return resolve();
-    const done = () => { if (pc.iceGatheringState === "complete") resolve(); };
-    pc.addEventListener("icegatheringstatechange", done); setTimeout(resolve, 2500);
+    if (p.iceGatheringState === "complete") return resolve();
+    p.addEventListener("icegatheringstatechange", () => { if (p.iceGatheringState === "complete") resolve(); }); setTimeout(resolve, 2500);
   });
-  let res;
+  let res = null, data = {};
   try {
     res = await fetch("/offer", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type, pin, nome: $("nome").value }) });
+      body: JSON.stringify({ sdp: p.localDescription.sdp, type: p.localDescription.type, pin: $("pin").value.trim(), nome: $("nome").value }) });
+    data = await res.json().catch(() => ({}));
   } catch (e) { res = null; }
-  const data = res ? await res.json().catch(() => ({})) : {};
-  if (!res || !res.ok) {
-    $("loginError").textContent = data.erro || "Robô fora do ar. Confira o endereço e a rede.";
-    setConn("Desconectado", "err"); $("enter").disabled = false; pc.close(); return;
+  if (!res) return failFirst({ motivo: "Robô fora do ar. Confira o endereço e a rede." });
+  if (!res.ok) {
+    if ([401, 403, 429].includes(res.status)) return { fatal: true, motivo: data.erro || "PIN recusado." };   // PIN errado/bloqueado: não insiste
+    return failFirst({ motivo: data.erro || "O robô não respondeu." });
   }
-  await pc.setRemoteDescription(data);
-  $("login").classList.add("hidden"); $("app").classList.remove("hidden");
-  if (!micOk) { $("talk").disabled = true; $("talk").textContent = "Microfone bloqueado"; $("talk").title = "Permita o microfone nas configurações do navegador (e use HTTPS)."; }
-  setMode("autonomo", false);
+  await p.setRemoteDescription(data);
+  const open = await new Promise((resolve) => {
+    if (ch.readyState === "open") return resolve(true);
+    ch.onopen = () => resolve(true); setTimeout(() => resolve(false), 8000);
+  });
+  if (!open) return failFirst({ motivo: "A conexão com o robô não abriu." });
+  return { ok: true };
+}
+function failFirst(r) { return everConnected ? { ok: false } : { fatal: true, motivo: r.motivo }; }   // antes do 1º acesso, mostra o erro em vez de insistir
+
+function onConn(estado, info) {
+  if (estado === "online") {
+    everConnected = true;
+    $("login").classList.add("hidden"); $("app").classList.remove("hidden"); $("stateBar").classList.remove("hidden");
+    setConn("Online", "ok"); $("retry").classList.add("hidden"); showAlert("");
+    ping(); drawControls();
+  } else if (estado === "reconectando") {
+    setConn("Reconectando…", "warn", info && info.tentativa ? "Tentativa " + info.tentativa : "");
+    $("retry").classList.remove("hidden"); showAlert("Sem conexão com o robô. Tentando de novo…");
+  } else {
+    if (!everConnected) {
+      $("loginError").textContent = (info && info.motivo) || "Não foi possível entrar."; $("enter").disabled = false; setConn("Sem conexão", "err");
+    } else {
+      setConn("Sem conexão", "err", (info && info.motivo) || ""); $("retry").classList.remove("hidden"); showAlert((info && info.motivo) || "Sem conexão com o robô.");
+    }
+  }
+}
+
+async function startFirst() {
+  $("loginError").textContent = "";
+  if (!/^\d{6}$/.test($("pin").value.trim())) { $("loginError").textContent = "O PIN tem 6 dígitos."; return; }
+  $("enter").disabled = true; setConn("Conectando…", "warn");
+  if (!micTrack) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      micTrack = micStream.getAudioTracks()[0]; micTrack.enabled = false; meter(micStream, waves.mic);
+    } catch (e) { micTrack = null; }
+  }
+  if (!micTrack) { $("talk").disabled = true; $("talk").title = "Permita o microfone nas configurações do navegador (e use HTTPS)."; }
+  startController();
+}
+function startController() {
+  if (rc) rc.para();
+  rc = Reconect.criar({
+    agora: () => performance.now(), espera: (fn, ms) => setTimeout(fn, ms), cancela: (t) => clearTimeout(t), sorteio: Math.random,
+    silencioMs: 5000, conecta, envia: raw, fecha: closePc, aoMudar: onConn,
+  });
+  rc.inicia();
 }
 
 function ping() {
-  if (!dc || dc.readyState !== "open") return;
-  send({ tipo: "ping", t: performance.now(), rtt });
+  if (!rc || rc.estado !== "online") return;
+  raw({ tipo: "ping", t: performance.now(), rtt });
   setTimeout(ping, 2000);
 }
 
 function onMessage(m) {
   if (m.tipo === "pong") { rtt = Math.round(performance.now() - m.t); $("rtt").textContent = rtt + " ms"; return; }
   if (m.tipo !== "estado") return;
-  $("st").textContent = (STATE[m.estado] || m.estado) + (m.mensagem ? " · " + m.mensagem : "");
+  $("st").textContent = (STATE[m.estado] || m.estado || "—");
+  showAlert(m.mensagem || "");
   $("q").textContent = m.pergunta || "—"; $("a").textContent = m.resposta || "—";
   $("emo").textContent = m.expressao || "—"; $("faces").textContent = m.rostos ?? "—";
-  if (m.modo && m.modo !== mode) setMode(m.modo, false);
-  $("vision").setAttribute("aria-checked", String(!!m.visao));
-  if (m.voz_robotica_nivel !== undefined && !robotDrag) { $("robotLevel").value = m.voz_robotica_nivel; $("robotVal").textContent = m.voz_robotica_nivel + " %"; }
-  $("body3d").setAttribute("aria-checked", String(!!m.corpo3d));
+  if (m.modo && m.modo !== mode) { mode = m.modo; drawControls(); }
+  if (m.visao !== undefined && isOn($("vision")) !== !!m.visao) { $("vision").setAttribute("aria-checked", String(!!m.visao)); drawControls(); }
+  if (m.corpo3d !== undefined) switchLabel($("body3d"), "Corpo 3D", !!m.corpo3d);
+  if (m.voz_robotica_nivel !== undefined && !robotDrag) showLevel(m.voz_robotica_nivel);
+  voiceInfo(m.voz_perfil, m.voz_diag);
   $("gest").textContent = m.gesto || "—";
   if (m.fps) $("fpsText").textContent = "AO VIVO · " + m.fps + " FPS";
-  const eco = { eco: "eco cancelado (fala simultânea)", fone: "fone de ouvido", meia: "meia-via (mudo enquanto fala)" }[m.eco];
-  $("audioInfo").textContent = (eco || "—") + (m.continua ? " · conversa contínua no robô" : "");
-  $("bodyHelp").textContent = m.corpo3d ? "Corpo 3D ligado: o gesto aparece na tela do robô."
-                                        : "Corpo 3D desligado: o robô mostra só um aviso do gesto. Ligue a chave “Corpo 3D”.";
+  const eco = { eco: "eco cancelado", fone: "fone de ouvido", meia: "meia-via" }[m.eco];
+  $("audioInfo").textContent = (eco || "—") + (m.continua ? " · conversa contínua" : "");
 }
 
-function setMode(m, notify = true) {
-  mode = m;
-  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
-  $("modeHelp").textContent = MODE_HELP[m];
-  $("sayHelp").textContent = m === "teleoperado" ? "Sai pela voz local do robô (gratuita)." : "A IA fala a frase com a voz dela.";
-  if (notify) send({ tipo: "mode", modo: m });
+function showLevel(n) {
+  $("robotLevel").value = n; $("robotVal").textContent = n + " %";
+  $("robotLevel").setAttribute("aria-valuetext", n + " %");
+}
+function voiceInfo(perfil, d) {
+  const note = $("voiceNote");
+  note.classList.remove("bad");
+  if (d && d.ok === false) {            // diagnóstico: só aqui, nunca na tela do robô
+    note.textContent = "A voz artificial falhou: o robô fica em silêncio e nunca volta ao original.";
+    note.classList.add("bad");
+    $("voiceDiag").textContent = "Motivo: " + (d.ultimo_erro || "desconhecido") + " · falhas: " + (d.falhas || 0);
+  } else if (perfil === "mistura") {
+    note.textContent = "Mistura: parte da voz original continua audível e isso não padroniza a identidade da voz.";
+    $("voiceDiag").textContent = "";
+  } else {
+    note.textContent = perfil === "robotica" ? "Voz 100 % artificial: IA e operador soam iguais." : "";
+    $("voiceDiag").textContent = "";
+  }
 }
 
-let pttLocked = false, pttStartY = null;
-function talkLabel() {
-  $("talk").classList.toggle("live", pttOn && !pttLocked);
-  $("talk").classList.toggle("locked", pttLocked);
-  $("talk").textContent = pttLocked ? "Microfone travado · toque para soltar" : pttOn ? "Falando… solte para parar" : "Segure para falar";
-  $("lockHint").classList.toggle("show", pttOn && !pttLocked);
+function setMode(m) { mode = m; drawControls(); send({ tipo: "mode", modo: m }); }
+function setBody(on) {                   // corpo 3D: só a chave dos gestos; os olhos 2D não são tocados
+  switchLabel($("body3d"), "Corpo 3D", on);
+  send({ tipo: "body", ligado: on });
 }
+function setEyes(on) {                   // olhos/expressões 2D: independente do corpo 3D
+  switchLabel($("eyes2d"), "Olhos 2D", on);
+  $("expr").setAttribute("aria-disabled", String(!on));
+  $("expr").querySelectorAll("button").forEach((b) => (b.disabled = !on));
+  if (!on) send({ tipo: "expression", nome: "auto" });
+}
+
 function talk(on) {
   if (!micTrack || pttOn === on) return;
-  pttOn = on; micTrack.enabled = on;
+  pttOn = on;
   if (!on) pttLocked = false;
-  talkLabel();
-  send({ tipo: "ptt", ligado: on });
+  drawControls();
+  clearTimeout(pttTail);
+  if (on) { micTrack.enabled = true; raw({ tipo: "ptt", ligado: true }); return; }
+  // soltar não corta na hora: o fim da palavra ainda está no codec/rede (~0,4 s) e o dedo larga antes da fala acabar
+  pttTail = setTimeout(() => { if (!pttOn) { micTrack.enabled = false; raw({ tipo: "ptt", ligado: false }); } }, 450);
 }
-function lockTalk() {                     // conversa livre: microfone aberto até tocar de novo
+function lockTalk() {                    // conversa livre: microfone aberto até tocar de novo
   if (!micTrack) return;
-  talk(true); pttLocked = true; talkLabel();
+  talk(true); pttLocked = true; drawControls();
   if (navigator.vibrate) navigator.vibrate([10, 40, 10]);
 }
 
-$("enter").onclick = connect;
-$("pin").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
-document.querySelectorAll(".seg button").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
+function openPanel(id, opener) {
+  closePanels(false);
+  lastOpener = opener; $(id).classList.add("open"); opener.setAttribute("aria-expanded", "true");
+  const f = $(id).querySelector("button:not([disabled]), select, input"); if (f) f.focus();
+}
+function closePanels(refocus = true) {
+  document.querySelectorAll(".col.open").forEach((p) => p.classList.remove("open"));
+  $("openLeft").setAttribute("aria-expanded", "false"); $("openRight").setAttribute("aria-expanded", "false");
+  if (refocus && lastOpener) { lastOpener.focus(); lastOpener = null; }
+}
+
+$("enter").onclick = startFirst;
+$("pin").addEventListener("keydown", (e) => { if (e.key === "Enter") startFirst(); });
+$("retry").onclick = () => { if (rc && rc.estado === "reconectando") rc.tentaJa(); else startController(); };
+$("modeToggle").onclick = () => setMode(mode === "teleoperado" ? "autonomo" : "teleoperado");
+$("assist").onclick = () => setMode(mode === "assistido" ? "autonomo" : "assistido");
+$("vision").onclick = () => { const on = !isOn($("vision")); $("vision").setAttribute("aria-checked", String(on)); drawControls(); send({ tipo: "vision", ligado: on }); };
+$("body3d").onclick = () => setBody(!isOn($("body3d")));
+$("eyes2d").onclick = () => { setEyes(!isOn($("eyes2d"))); };
 document.querySelectorAll("#expr button").forEach((b) => (b.onclick = () => send({ tipo: "expression", nome: b.dataset.e })));
-document.querySelectorAll("#gestures button").forEach((b) => (b.onclick = () => send({ tipo: "gesture", nome: b.dataset.g })));
-$("instr").onclick = () => { const t = $("sayText").value.trim(); if (t) { send({ tipo: "instruction", texto: t }); $("sayText").value = ""; } };
+document.querySelectorAll("#gestures button").forEach((b) => (b.onclick = () => send({ tipo: "gesture", nome: b.dataset.g, lado: $("gside").value })));
 $("say").onclick = () => { const t = $("sayText").value.trim(); if (t) { send({ tipo: "say", texto: t }); $("sayText").value = ""; } };
+$("instr").onclick = () => { const t = $("instrText").value.trim(); if (t) { send({ tipo: "instruction", texto: t }); $("instrText").value = ""; } };
+$("sayText").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("say").click(); } });
+$("instrText").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("instr").click(); } });
 $("stop").onclick = () => send({ tipo: "interrupt" });
-$("stopBar").onclick = () => send({ tipo: "interrupt" });
-document.querySelectorAll(".toggle > span").forEach((s) => (s.onclick = () => s.nextElementSibling.click()));
-let robotDrag = false, robotLast = 0;
+$("openLeft").onclick = () => openPanel("colLeft", $("openLeft"));
+$("openRight").onclick = () => openPanel("colRight", $("openRight"));
+$("scrim").onclick = () => closePanels();
+document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closePanels()));
 $("robotLevel").addEventListener("input", (e) => {
-  robotDrag = true; $("robotVal").textContent = e.target.value + " %";
+  robotDrag = true; showLevel(+e.target.value);
   if (performance.now() - robotLast > 120) { robotLast = performance.now(); send({ tipo: "robot_voice", nivel: +e.target.value, final: false }); }
 });
 $("robotLevel").addEventListener("change", (e) => { robotDrag = false; send({ tipo: "robot_voice", nivel: +e.target.value, final: true }); });
-for (const id of ["vision", "body3d"]) {
-  $(id).onclick = () => {
-    const on = $(id).getAttribute("aria-checked") !== "true";
-    $(id).setAttribute("aria-checked", String(on));
-    send({ tipo: { vision: "vision", body3d: "body" }[id], ligado: on });
-  };
-}
+
 const talkBtn = $("talk");
 talkBtn.addEventListener("pointerdown", (e) => {
   if (pttLocked) { talk(false); pttStartY = null; return; }     // travado: um toque solta
-  pttStartY = e.clientY;
-  talk(true);
-  if (navigator.vibrate) navigator.vibrate(12);              // retorno tátil no Android
-  try { talkBtn.setPointerCapture(e.pointerId); } catch (_) {}
+  pttStartY = e.clientY; talk(true);
+  if (navigator.vibrate) navigator.vibrate(12);
+  try { talkBtn.setPointerCapture(e.pointerId); } catch (_) { /* sem captura */ }
 });
-talkBtn.addEventListener("pointermove", (e) => {
-  if (pttOn && !pttLocked && pttStartY !== null && pttStartY - e.clientY > 60) lockTalk();   // deslizou para cima
-});
+talkBtn.addEventListener("pointermove", (e) => { if (pttOn && !pttLocked && pttStartY !== null && pttStartY - e.clientY > 60) lockTalk(); });
 talkBtn.addEventListener("contextmenu", (e) => e.preventDefault());
 talkBtn.addEventListener("pointerup", () => { pttStartY = null; if (!pttLocked) talk(false); });
 talkBtn.addEventListener("pointercancel", () => { pttStartY = null; if (!pttLocked) talk(false); });
-const typing = () => ["TEXTAREA", "INPUT"].includes(document.activeElement.tagName);
+const typing = () => ["TEXTAREA", "INPUT", "SELECT"].includes(document.activeElement.tagName);
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && !e.repeat && !typing()) { e.preventDefault(); if (!pttLocked) talk(true); }
+  if (e.key === "Escape") { closePanels(); return; }
+  if (e.code === "Space" && !e.repeat && !typing() && document.activeElement !== talkBtn) { e.preventDefault(); if (!pttLocked) talk(true); }
   if (e.code === "KeyT" && !e.repeat && !typing()) { e.preventDefault(); pttLocked ? talk(false) : lockTalk(); }
 });
-document.addEventListener("keyup", (e) => { if (e.code === "Space" && !pttLocked) talk(false); });
+document.addEventListener("keyup", (e) => { if (e.code === "Space" && !pttLocked && !typing()) talk(false); });
 window.addEventListener("blur", () => { if (!pttLocked) talk(false); });
+window.addEventListener("online", () => { if (rc) rc.tentaJa(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && rc) rc.tentaJa(); });
 $("videoBox").addEventListener("click", (e) => {
+  if (e.target.closest(".opener")) return;
   const r = $("videoBox").getBoundingClientRect();
   const u = (e.clientX - r.left) / r.width, v = (e.clientY - r.top) / r.height;
   // a imagem da câmera não é espelhada; o olhar da Ayra usa a vista espelhada (ela está de frente para a cena)
@@ -425,6 +563,8 @@ $("videoBox").addEventListener("click", (e) => {
   const m = $("lookMark"); m.style.left = u * 100 + "%"; m.style.top = v * 100 + "%"; m.style.opacity = 1;
   setTimeout(() => (m.style.opacity = 0), 900);
 });
+drawControls();
+setEyes(true);
 </script>
 </body>
 </html>

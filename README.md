@@ -112,8 +112,30 @@ mesmo nos dois: fim de fala local, foto junto com a pergunta, fala em streaming,
 ## Economia de tokens
 
 Respostas de **1 frase (até ~15 palavras)**, teto por resposta (**Ajustes → Conversa e IA → Tamanho das respostas**: curtíssimas 220,
-curtas 350 [padrão, ~16 s de fala], normais 700 ou sem limite) e foto de **512 px** por pergunta (`NURIA_IMAGEM_LADO`).
-A foto sai da sessão depois da resposta (Realtime). Silêncio ou cancelamento não enviam nada.
+curtas 350 [padrão, ~16 s de fala], normais 700 ou sem limite). **Visão sob demanda** (padrão): nenhuma foto sai com a pergunta; a IA só
+chama a ferramenta `olhar` quando a resposta depende da câmera ("o que é isso na minha mão?") e então vai **uma** foto de **512 px**
+(`NURIA_IMAGEM_LADO`), apagada da sessão depois da resposta. `NURIA_VISAO=sempre` volta a mandar foto em toda pergunta. Ela não descreve
+o ambiente por conta própria. Silêncio ou cancelamento não enviam nada.
+
+## Voz única (ElevenLabs)
+
+Cole a chave em **Ajustes → Conversa e IA → Chave da ElevenLabs** (vai para `ELEVENLABS_API_KEY` no `.env`; nunca aparece inteira).
+Com a chave e **Voz única** ligada, toda frase do operador (digitada ou pronta, nos modos assistido e teleoperado) sai pela mesma voz
+sintética da ElevenLabs, em streaming (PCM 24 kHz, modelo `eleven_flash_v2_5`), então a voz não muda de operador para operador.
+**Testar voz ElevenLabs** fala uma frase. Se a ElevenLabs falhar (sem internet, sem créditos), avisa e usa a voz local. Só texto sai do
+computador. `NURIA_ELEVEN_VOZ` (id da voz, padrão uma voz pronta), `NURIA_ELEVEN_MODELO`, `NURIA_ELEVEN=off`.
+*Ainda não* mascara a **fala ao vivo** do operador (microfone): isso exige transcrição em tempo real (próxima etapa).
+
+## Fim de fala e rostos
+
+- **Fim de fala:** 1,5 s de silêncio (antes 0,8 s) fecha a mensagem; pausas para pensar não cortam mais. `NURIA_FIM_FALA` (0,6–4 s) ajusta.
+  A IA responde ao conjunto do que foi dito e mantém as mensagens anteriores da conversa.
+- **Memória de rostos (opcional, só neste computador):** "Ayra, lembre de mim, sou o João" → ela pergunta se pode guardar o rosto
+  (só 128 números, sem foto); só depois do **sim** (turno seguinte) grava, por **7 dias** (`NURIA_ROSTOS_DIAS`, 0 = sem prazo;
+  cada reconhecimento renova). Reconhecida, a IA recebe uma nota de texto com o nome (poucos tokens, sem imagem). "Esqueça meu rosto"
+  apaga na hora. Dados em `rostos.local.json` (fora do Git). Precisa do modelo SFace: `preparar_modelos.bat` (~37 MB).
+  `NURIA_ROSTOS=off` desliga; `NURIA_ROSTOS_LIMIAR` (0,40) ajusta o rigor. Custo zero sem cadastro; com cadastro, ~1 leitura a cada 2 s
+  só se há rosto na câmera.
 
 ## Se o app fechar
 
@@ -184,13 +206,19 @@ caracteres), **Testar conexão**, trocar **Modelo** e **Voz** do provedor escolh
 | `NURIA_MODELO_GEMINI` | `gemini-3.8-live` | ou `gemini-3.1-flash-live-preview` |
 | `NURIA_VOZ_GEMINI` | `Kore` | Kore, Aoede, Leda, Zephyr, Puck, Charon, Fenrir, Orus |
 | `NURIA_MAX_TOKENS` | `350` | Teto por resposta (áudio conta; ~20–25 tokens por segundo de fala); `0` = sem limite |
+| `ELEVENLABS_API_KEY` | — | Chave da ElevenLabs (voz única); também pelo painel |
+| `NURIA_ELEVEN` / `_VOZ` / `_MODELO` | `on` / voz pronta / `eleven_flash_v2_5` | Voz única: liga, id da voz, modelo |
+| `NURIA_VISAO` | `demanda` | `sempre` = foto em toda pergunta. Recria a sessão |
+| `NURIA_FIM_FALA` | `1.5` | Segundos de silêncio que encerram a fala (0,6–4) |
+| `NURIA_ROSTOS` / `_DIAS` / `_LIMIAR` | `on` / `7` / `0.40` | Memória de rostos: liga, validade em dias, rigor |
 | `NURIA_IMAGEM_LADO` | `512` | Maior lado da foto enviada; 768 = mais detalhe e mais tokens |
 | `NURIA_MODELO_VISAO`, `_STT`, `_TTS`, `NURIA_VOZ` | — | Só o modo legado |
 
 ## Privacidade
 
 - A chave nunca entra no código, no Git nem na tela.
-- Nada de vídeo contínuo: **uma foto** por pergunta (768 px, JPEG), só em memória, mostrada na coluna.
+- Nada de vídeo contínuo: **uma foto** só quando a IA precisa olhar (JPEG, só em memória, mostrada na coluna).
+- Rostos: só com sim explícito, só vetores numéricos locais (nunca fotos, nunca na nuvem), com validade e apagar na hora.
 - Áudio só sai do computador enquanto o estado é **Ouvindo**; nada de áudio ou imagem é gravado em disco.
 - `logs/sessoes.jsonl` guarda só texto e tempos; desligue com `--sem-registro`.
 

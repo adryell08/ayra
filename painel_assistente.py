@@ -425,9 +425,7 @@ class AssistantPanel:
         if locked and not (self.typing and self.draft.strip()):
             label = {"listening": "Ouvindo…", "speaking": "Fale por cima", "thinking": "Pensando…",
                      "capturing": "Pensando…"}.get(st, "Microfone travado")
-            base, enabled = mix(pal["green"], (0, 0, 0), .3), True
-            if snap.mode == "teleoperado":
-                label = "Em ligação"
+            base, enabled = mix(pal["green"], (0, 0, 0), .3), True      # mesmo texto com IA ou operador: o público não distingue
             self._paint_mic(r, snap, label, base, enabled, reduce_motion, lock=True)
             note = r._text("caption", "Conversa contínua · toque no botão para encerrar", sc.text_dim)
             scr.blit(note, (self.mic.x, self.mic.top - note.get_height() - int(6 * s)))
