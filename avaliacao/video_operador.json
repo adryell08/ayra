@@ -1,0 +1,70 @@
+{
+  "cpus": 2,
+  "resultados": [
+    {
+      "alvo": 15,
+      "adaptativo": false,
+      "carga_processos": 0,
+      "fps_cliente": 15.0,
+      "fps_servidor": 15.0,
+      "idade_ms": 30.0,
+      "idade_p95_ms": 34.0,
+      "cpu_pct": 14.4,
+      "mem_mb": 149.0,
+      "descartados": 0,
+      "taxa_efetiva_final": 15
+    },
+    {
+      "alvo": 30,
+      "adaptativo": false,
+      "carga_processos": 0,
+      "fps_cliente": 30.0,
+      "fps_servidor": 29.9,
+      "idade_ms": 1.3,
+      "idade_p95_ms": 3.1,
+      "cpu_pct": 21.4,
+      "mem_mb": 148.0,
+      "descartados": 0,
+      "taxa_efetiva_final": 30
+    },
+    {
+      "alvo": 30,
+      "adaptativo": true,
+      "carga_processos": 0,
+      "fps_cliente": 29.8,
+      "fps_servidor": 29.7,
+      "idade_ms": 5.1,
+      "idade_p95_ms": 9.0,
+      "cpu_pct": 21.0,
+      "mem_mb": 148.0,
+      "descartados": 0,
+      "taxa_efetiva_final": 30
+    },
+    {
+      "alvo": 30,
+      "adaptativo": false,
+      "carga_processos": 2,
+      "fps_cliente": 21.6,
+      "fps_servidor": 22.2,
+      "idade_ms": 3.4,
+      "idade_p95_ms": 33.9,
+      "cpu_pct": 17.0,
+      "mem_mb": 154.6,
+      "descartados": 2,
+      "taxa_efetiva_final": 30
+    },
+    {
+      "alvo": 30,
+      "adaptativo": true,
+      "carga_processos": 2,
+      "fps_cliente": 24.6,
+      "fps_servidor": 24.6,
+      "idade_ms": 4.9,
+      "idade_p95_ms": 47.4,
+      "cpu_pct": 18.6,
+      "mem_mb": 154.9,
+      "descartados": 1,
+      "taxa_efetiva_final": 30
+    }
+  ]
+}

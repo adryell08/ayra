@@ -444,7 +444,11 @@ function onMessage(m) {
   if (m.voz_robotica_nivel !== undefined && !robotDrag) showLevel(m.voz_robotica_nivel);
   voiceInfo(m.voz_perfil, m.voz_diag);
   $("gest").textContent = m.gesto || "—";
-  if (m.fps) $("fpsText").textContent = "AO VIVO · " + m.fps + " FPS";
+  if (m.fps) {
+    const v = m.video || {};
+    $("fpsText").textContent = "AO VIVO · " + (v.fps_real ? Math.round(v.fps_real) + "/" : "") + m.fps + " FPS" + (v.idade_ms ? " · " + v.idade_ms + " ms" : "");
+    $("fpsText").title = v.fps_real ? ("Taxa real " + v.fps_real + " de " + m.fps + " (teto " + (m.fps_teto || m.fps) + ") · idade do quadro " + v.idade_ms + " ms (p95 " + v.idade_p95_ms + ") · descartados " + v.descartados + " · CPU do robô " + v.cpu_pct + "% · memória " + v.mem_mb + " MB") : "";
+  }
   const eco = { eco: "eco cancelado", fone: "fone de ouvido", meia: "meia-via" }[m.eco];
   $("audioInfo").textContent = (eco || "—") + (m.continua ? " · conversa contínua" : "");
 }

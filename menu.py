@@ -93,6 +93,11 @@ class OptionsMenu:
                 ("audio:eco", "Eco do alto-falante", a.get("label", "") + " · tocar para trocar", ""),
                 ("audio:memory", "Memória", ("Ligada · " + str(a.get("memory_n", 0)) + " instruções vigentes") if a.get("memory")
                  else ("Bloqueada (sem registro)" if a.get("memory_blocked") else "Desligada"), "on" if a.get("memory") else "off"),
+                ("audio:rag", "RAG: memória e fichas da Ayra",
+                 "Ligado · entra no contexto só quando a pergunta tem relação" if a.get("rag") else "Desligado · contexto como era", "on" if a.get("rag") else "off"),
+                ("audio:ragvoz", "RAG por voz (ferramenta lembrar)",
+                 ("Ligado · ela consulta por voz quando precisar" if a.get("rag_voz") else "Desligado · por voz ela não consulta")
+                 if a.get("rag") else "Ligue o RAG primeiro", "on" if (a.get("rag") and a.get("rag_voz")) else "off"),
                 ("audio:forget", "Esquecer tudo", "Apaga instruções, preferências e histórico da memória · tocar duas vezes", ""),
             ]
         if view == "body":
@@ -116,7 +121,7 @@ class OptionsMenu:
                 ("remote:pin", "PIN", (r.get("pin", "") + " · tocar para gerar outro") if on else "—", ""),
                 ("remote:memory", "Painel de memória (navegador)", (r.get("url", "") + "/memoria · mesmo PIN") if on else "Ligue a sala primeiro", ""),
                 ("remote:kick", "Desconectar operador", r.get("operator") or "Nenhum conectado", ""),
-                ("remote:fps", "Vídeo para o operador", f"{r.get('fps', 10)} quadros/s · tocar para trocar (5, 10, 15)", ""),
+                ("remote:fps", "Vídeo para o operador", f"{r.get('fps', 10)} quadros/s · tocar para trocar (5, 10, 15, 30) · baixa sozinho se travar", ""),
             ]
         if view == "arduino":
             a = getattr(hud, "arduino", {}) or {}
@@ -168,7 +173,7 @@ class OptionsMenu:
         if action.startswith("body:"):
             return "VISUAL" if action in ("body:enabled", "body:quality") else "GESTOS"
         if action.startswith("audio:"):
-            return ("CONVERSA" if action == "audio:continuous" else "MEMÓRIA" if action in ("audio:memory", "audio:forget")
+            return ("CONVERSA" if action == "audio:continuous" else "MEMÓRIA" if action in ("audio:memory", "audio:rag", "audio:ragvoz", "audio:forget")
                     else "MICROFONE")
         if action.startswith("remote:"):
             return "SALA DO OPERADOR"
@@ -466,7 +471,7 @@ class OptionsMenu:
                                  border_radius=int(20 * scale))
             toggle = action.startswith(("feature:", "sim:")) or action in (
                 "arduino:enabled", "arduino:test", "remote:enabled", "body:enabled", "body:quality",
-                "audio:continuous", "audio:memory")
+                "audio:continuous", "audio:memory", "audio:rag", "audio:ragvoz")
             key = renderer._text("caption", "" if toggle else shortcut, sc.text_dim)
             available = rect.w - 3 * pad - max(key.get_width(), int((48 if toggle else 28) * scale))
             name_img = renderer._text("body", renderer._fit("body", name, available), sc.palette["red"] if action == "quit" else sc.text)

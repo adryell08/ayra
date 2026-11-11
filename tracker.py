@@ -374,6 +374,8 @@ class CameraSource:
         self._full = None                 # último quadro inteiro, só enquanto a sala do operador pede
         self._full_wanted = -1e9
         self._full_last = -1e9
+        self._full_seq = 0                # número do quadro (quem lê descarta repetidos e mede a idade)
+        self.operator_fps = 16            # taxa em que a sala do operador quer os quadros (até a da câmera)
         self._switch = threading.Event()
         self._pending_features = {}
         self._health = CaptureHealth()
@@ -442,11 +444,19 @@ class CameraSource:
 
     def latest_frame(self):
         """Último quadro inteiro (BGR, sem espelhar) para a sala do operador; não interfere na foto da pergunta."""
+        return self.latest_frame_info()[0]
+
+    def latest_frame_info(self):
+        """(quadro, número de sequência, instante da captura) do último quadro inteiro; (None, seq, 0) se pausada/sem câmera.
+        O quadro é entregue por referência (sem cópia): quem lê não pode alterá-lo."""
         with self._lock:
             self._full_wanted = time.perf_counter()
             if self.paused or self.status != "ok":
-                return None
-            return self._full
+                return None, self._full_seq, 0.0
+            return self._full, self._full_seq, self._full_last
+
+    def set_operator_fps(self, fps: float) -> None:
+        self.operator_fps = max(1.0, min(60.0, float(fps)))
 
     def preview(self):
         """(miniatura BGR espelhada ~320 px, número de sequência) para a coluna; None se pausada/sem câmera."""
@@ -495,6 +505,7 @@ class CameraSource:
                     else:
                         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                        cap.set(cv2.CAP_PROP_FPS, 30)               # pede 30 quadros/s (a câmera usa o que suportar)
                         with self._lock:
                             self._health.reset()
                         readable = False
@@ -604,9 +615,9 @@ class CameraSource:
                 self._still_ready.set()
             if ok and frame is not None:
                 tnow = time.perf_counter()
-                if tnow - self._full_wanted < 1.0 and tnow - self._full_last >= 1 / 16:
-                    with self._lock:
-                        self._full, self._full_last = frame.copy(), tnow
+                if tnow - self._full_wanted < 1.0 and tnow - self._full_last >= 0.9 / self.operator_fps:
+                    with self._lock:       # sem frame.copy(): cap.read() devolve um array novo a cada quadro e ninguém o altera
+                        self._full, self._full_last, self._full_seq = frame, tnow, self._full_seq + 1
                 if tnow - self._preview_wanted < 1.0 and tnow - self._preview_last >= 1 / 15:
                     import cv2
                     fh, fw = frame.shape[:2]

@@ -350,10 +350,10 @@ def test_ui_and_settings():
     hud.remote = dict(enabled=True, fps=10)
     m.activate("back")
     m.activate("remote")
-    check("Ajustes → Controle remoto → Vídeo: 10 quadros/s (5, 10, 15)",
+    check("Ajustes → Controle remoto → Vídeo: 10 quadros/s (5, 10, 15, 30)",
           any(k == "remote:fps" and "10 quadros" in st for k, _, st, _ in m.items(hud, theme.SCHEMES["dark"])))
     import operador
-    check("servidor: 10 quadros/s por padrão; 5 e 15 disponíveis", operador.VIDEO_FPS == 10 and operador.FPS_CHOICES == (5, 10, 15))
+    check("servidor: 10 quadros/s por padrão; 5, 15 e 30 disponíveis", operador.VIDEO_FPS == 10 and operador.FPS_CHOICES == (5, 10, 15, 30))
     html = (HERE / "operador_web" / "index.html").read_text(encoding="utf-8")
     check("sala do operador: deslizar para cima trava o 'Falar' (como no WhatsApp); T no teclado",
           "lockTalk" in html and "pointermove" in html and "KeyT" in html and "deslize para cima ou t para travar" in html.lower())

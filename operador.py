@@ -12,8 +12,10 @@ Privacidade: câmera e microfone do robô só são transmitidos enquanto há ope
 from __future__ import annotations
 
 import asyncio
+import collections
 import fractions
 import json
+import os
 import queue
 import re
 import secrets
@@ -26,10 +28,97 @@ from typing import Callable, Optional
 
 import numpy as np
 
+
+class VideoStats:
+    """Medidas do vídeo enviado ao operador (janela deslizante): fps real, idade do quadro no envio, descartados, CPU e memória.
+    Só números, sem imagem. Chamado pela trilha (laço asyncio) e lido pela telemetria (mesma thread)."""
+
+    WINDOW = 3.0
+
+    def __init__(self):
+        self.sent = collections.deque()            # (instante do envio, idade em s)
+        self.dropped = 0                            # quadros da câmera que ninguém enviou (substituídos antes)
+        self.repeated = 0                           # quadros repetidos só para manter o fluxo vivo
+        self.reanchored = 0                         # vezes que o relógio foi refeito por atraso (sem rajada de recuperação)
+        self._cpu0 = (time.perf_counter(), sum(os.times()[:2]))
+
+    def record(self, now: float, age: float, dropped: int = 0, repeated: bool = False) -> None:
+        self.sent.append((now, max(0.0, age)))
+        self.dropped += max(0, dropped)
+        self.repeated += 1 if repeated else 0
+        while self.sent and now - self.sent[0][0] > self.WINDOW:
+            self.sent.popleft()
+
+    def snapshot(self, now: Optional[float] = None) -> dict:
+        now = time.perf_counter() if now is None else now
+        while self.sent and now - self.sent[0][0] > self.WINDOW:
+            self.sent.popleft()
+        n = len(self.sent)
+        span = (self.sent[-1][0] - self.sent[0][0]) if n > 1 else 0.0
+        fps = (n - 1) / span if span > 0.2 else 0.0
+        ages = sorted(a for _, a in self.sent)
+        t, cpu = self._cpu0
+        cpu_now = sum(os.times()[:2])
+        pct = 100.0 * (cpu_now - cpu) / max(1e-3, now - t)
+        self._cpu0 = (now, cpu_now)
+        return dict(fps_real=round(fps, 1), idade_ms=round(1000 * ages[n // 2]) if n else 0,
+                    idade_p95_ms=round(1000 * ages[min(n - 1, int(n * 0.95))]) if n else 0, descartados=self.dropped,
+                    repetidos=self.repeated, relogio_refeito=self.reanchored, cpu_pct=round(pct), mem_mb=_rss_mb())
+
+
+def _rss_mb() -> int:
+    try:
+        import psutil
+        return int(psutil.Process().memory_info().rss / 1048576)
+    except Exception:
+        try:
+            import resource
+            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)     # pico, em MB (Linux)
+        except Exception:
+            return 0
+
+
+class AdaptiveFps:
+    """Escolhe a taxa efetiva abaixo do teto do usuário quando o envio não acompanha, e volta a subir com folga (histerese).
+    Degrada se o fps real ficar < 75 % do alvo ou o quadro chegar velho (> 400 ms) em 2 avaliações seguidas; sobe um degrau depois de
+    6 avaliações boas (≥ 95 % do alvo e idade < 150 ms)."""
+
+    def __init__(self, cap: int, choices=(5, 10, 15, 30)):
+        self.choices = sorted(choices)
+        self.cap = cap
+        self.eff = cap
+        self.bad = self.good = 0
+
+    def set_cap(self, cap: int) -> None:
+        self.cap = cap
+        self.eff = min(self.eff, cap) if self.eff != cap else cap
+        self.bad = self.good = 0
+
+    def _step(self, direction: int) -> int:
+        lower = [c for c in self.choices if c <= self.cap]
+        i = lower.index(self.eff) if self.eff in lower else len(lower) - 1
+        return lower[max(0, min(len(lower) - 1, i + direction))]
+
+    def update(self, fps_real: float, age_ms: float, has_video: bool) -> int:
+        if not has_video:
+            return self.eff
+        if fps_real < 0.75 * self.eff or age_ms > 400:
+            self.bad, self.good = self.bad + 1, 0
+            if self.bad >= 2:
+                self.eff, self.bad = self._step(-1), 0
+        elif fps_real >= 0.95 * self.eff and age_ms < 150:
+            self.good, self.bad = self.good + 1, 0
+            if self.good >= 6:
+                self.eff, self.good = self._step(+1), 0
+        else:
+            self.bad = self.good = 0
+        return self.eff
+
 WEB_DIR = Path(__file__).resolve().parent / "operador_web"
 CERT_DIR = Path(__file__).resolve().parent / "certs"
-VIDEO_FPS = 10                         # padrão (5, 10 ou 15 em Ajustes → Controle remoto → Vídeo)
-FPS_CHOICES = (5, 10, 15)
+VIDEO_FPS = 10                         # padrão (5, 10, 15 ou 30 em Ajustes → Controle remoto → Vídeo)
+FPS_CHOICES = (5, 10, 15, 30)
+VIDEO_MAX_WIDTH = 640                  # largura máxima enviada (mais que isso só gasta CPU na codificação)
 AUDIO_RATE = 48000                      # WebRTC (Opus) trabalha a 48 kHz
 COMMANDS = ("mode", "say", "instruction", "expression", "gesture", "body", "look", "vision", "robot_voice", "interrupt", "ptt", "ping")
 
@@ -199,10 +288,16 @@ class OperatorServer:
     def __init__(self, frame_provider: Callable[[], Optional[np.ndarray]], telemetry: Callable[[], dict],
                  on_operator_audio: Callable[[np.ndarray], None], robot_muted: Callable[[], bool] = lambda: False,
                  port: int = 8765, pin: Optional[str] = None, use_tls: bool = True, mic_factory=None,
-                 fps: int = VIDEO_FPS):
+                 fps: int = VIDEO_FPS, frame_info_provider=None, on_fps=None, adaptive_fps: bool = True):
         self.frame_provider, self.telemetry, self.on_operator_audio = frame_provider, telemetry, on_operator_audio
-        self.robot_muted = robot_muted
-        self.fps = int(fps) if int(fps) in FPS_CHOICES else VIDEO_FPS
+        self.frame_info_provider = frame_info_provider      # () -> (quadro, sequência, captura): permite descartar repetidos e medir idade
+        self.on_fps = on_fps                                 # avisa a captura da taxa efetiva (a câmera só entrega o que a sala pede)
+        self.video_stats = VideoStats()
+        self.adaptive_fps = bool(adaptive_fps)
+        self._fps_cap = int(fps) if int(fps) in FPS_CHOICES else VIDEO_FPS
+        self._adaptive = AdaptiveFps(self._fps_cap)
+        self._fps = self._fps_cap
+        self._video_snap: dict = {}
         self.port, self.pin, self.use_tls = port, pin or new_pin(), use_tls
         self.commands: "queue.Queue[tuple]" = queue.Queue(maxsize=self.MAX_COMMANDS)
         self.commands_dropped = 0      # comandos descartados por fila cheia (o app esvazia a fila a cada quadro)
@@ -232,6 +327,42 @@ class OperatorServer:
         self._mem_tokens: dict = {}              # token -> validade (s); entra com o mesmo PIN da sala
         self._mem_hits: list = []
         self._db_pool = None
+
+    # ---- taxa de vídeo ------------------------------------------------------------------
+    @property
+    def fps(self) -> int:
+        """Taxa efetiva (a trilha lê isto a cada quadro). Com o ajuste adaptativo pode ficar abaixo do teto escolhido."""
+        return self._fps
+
+    @fps.setter
+    def fps(self, value: int) -> None:
+        """Teto escolhido pelo usuário (Ajustes). Vale na hora, sem reconectar."""
+        value = int(value) if int(value) in FPS_CHOICES else VIDEO_FPS
+        self._fps_cap = value
+        self._adaptive.set_cap(value)
+        self._set_effective(value)
+
+    @property
+    def fps_cap(self) -> int:
+        return self._fps_cap
+
+    def _set_effective(self, value: int) -> None:
+        self._fps = value
+        if self.on_fps is not None:
+            try:
+                self.on_fps(value)
+            except Exception:
+                pass
+
+    def _adapt_video(self) -> None:
+        """Chamado ~1×/s pela telemetria: ajusta a taxa efetiva sem passar do teto do usuário."""
+        snap = self.video_stats.snapshot()
+        self._video_snap = snap
+        if not self.adaptive_fps or self._pc is None:
+            return
+        eff = self._adaptive.update(snap["fps_real"], snap["idade_ms"], snap["fps_real"] > 0)
+        if eff != self._fps:
+            self._set_effective(eff)
 
     # ---- ciclo de vida ----------------------------------------------------------------
     @property
@@ -597,7 +728,10 @@ class OperatorServer:
 
         self._mic = self.mic_factory()
         mic_ok = self._mic.start()
-        pc.addTrack(CameraTrack(self.frame_provider, lambda: self.fps))
+        self.video_stats = VideoStats()                         # medidas novas a cada conexão
+        self._adaptive = AdaptiveFps(self._fps_cap)
+        self._set_effective(self._fps_cap)
+        pc.addTrack(CameraTrack(self.frame_provider, lambda: self.fps, self.frame_info_provider, self.video_stats))
         if mic_ok:
             pc.addTrack(MicTrack(self._mic))
         await pc.setRemoteDescription(RTCSessionDescription(sdp=params["sdp"], type=params["type"]))
@@ -761,12 +895,22 @@ class OperatorServer:
         self._push((kind, data))
 
     async def _telemetry_loop(self) -> None:
+        n = 0
         while True:
             await asyncio.sleep(0.25)
+            n += 1
+            if n % 4 == 0:
+                try:
+                    self._adapt_video()
+                except Exception:
+                    pass
             if self._channel is not None:
                 try:
                     payload = dict(self.telemetry())
                     payload["tipo"] = "estado"
+                    payload["fps"] = self._fps
+                    payload["fps_teto"] = self._fps_cap
+                    payload["video"] = getattr(self, "_video_snap", {})
                     self._send_now(payload)
                 except Exception:
                     pass
@@ -780,42 +924,81 @@ def _track_classes():
     import av
 
     class _CameraTrack(MediaStreamTrack):
+        """Vídeo robô → operador. Relógio fixo por taxa; quadro atrasado NÃO gera rajada de recuperação (refaz o relógio);
+        quadro repetido da câmera não é recodificado (espera o novo, com repetição só para manter o fluxo); pts vem do tempo real."""
         kind = "video"
 
-        def __init__(self, provider, fps=lambda: VIDEO_FPS):
+        def __init__(self, provider, fps=lambda: VIDEO_FPS, info_provider=None, stats: Optional[VideoStats] = None):
             super().__init__()
             self.provider = provider
+            self.info_provider = info_provider          # () -> (quadro, sequência, instante da captura), sem bloquear
             self.fps = fps
+            self.stats = stats if stats is not None else VideoStats()
             self._t0 = None
             self._n = 0
+            self._base = 0
+            self._fps = None
             self._last = None
+            self._last_seq = None
+            self._pts0 = None
+            self._legacy_seq = 0
+
+        def _fetch(self):
+            if self.info_provider is not None:
+                return self.info_provider()
+            return None
 
         async def recv(self):
-            if self._t0 is None:
-                self._t0 = time.perf_counter()
-            self._n += 1
+            now = time.perf_counter()
             fps = max(1, int(self.fps()))
-            if self._n == 1 or fps != getattr(self, "_fps", fps):              # mudou a taxa: recomeça o relógio
-                self._t0, self._base, self._fps = time.perf_counter(), self._n - 1, fps
-            wait = self._t0 + (self._n - self._base) / fps - time.perf_counter()
+            period = 1.0 / fps
+            if self._t0 is None or fps != self._fps:                      # primeira vez ou mudou a taxa: relógio novo
+                self._t0, self._base, self._fps, self._n = now, 0, fps, 0
+            self._n += 1
+            wait = self._t0 + (self._n - self._base) * period - now
             if wait > 0:
                 await asyncio.sleep(wait)
+            elif wait < -period:                                           # atrasado mais de um quadro: descarta o atraso
+                self._t0, self._base, self._n = now, 0, 1
+                self.stats.reanchored += 1
             loop = asyncio.get_running_loop()
-            img = await loop.run_in_executor(None, self.provider)
+            img, seq, captured = None, None, 0.0
+            repeated = False
+            if self.info_provider is not None:
+                deadline = time.perf_counter() + 1.5 * period
+                while True:
+                    img, seq, captured = self._fetch()
+                    if img is None or seq != self._last_seq or time.perf_counter() >= deadline:
+                        break
+                    await asyncio.sleep(0.004)                             # mesmo quadro de antes: espera o próximo, sem recodificar
+                repeated = img is not None and seq == self._last_seq
+            else:
+                img = await loop.run_in_executor(None, self.provider)
+                self._legacy_seq += 1
+                seq, captured = self._legacy_seq, time.perf_counter()
+            dropped = 0
             if img is not None:
-                import cv2
-                h, w = img.shape[:2]
-                scale = min(1.0, 640 / float(w))
-                if scale < 1.0:
-                    img = cv2.resize(img, (int(w * scale) // 2 * 2, int(h * scale) // 2 * 2), interpolation=cv2.INTER_AREA)
-                img = np.ascontiguousarray(img[:img.shape[0] // 2 * 2, :img.shape[1] // 2 * 2])   # codec exige par
-                self._last = img
+                if self._last_seq is not None and not repeated and isinstance(seq, int) and isinstance(self._last_seq, int):
+                    dropped = max(0, seq - self._last_seq - 1)             # quadros da câmera substituídos sem serem enviados
+                if not repeated or self._last is None:
+                    import cv2
+                    h, w = img.shape[:2]
+                    if w > VIDEO_MAX_WIDTH:
+                        sc = VIDEO_MAX_WIDTH / float(w)
+                        img = cv2.resize(img, (int(w * sc) // 2 * 2, int(h * sc) // 2 * 2), interpolation=cv2.INTER_AREA)
+                    elif h % 2 or w % 2:
+                        img = img[:h // 2 * 2, :w // 2 * 2]                # codec exige dimensões pares
+                    self._last = np.ascontiguousarray(img)
+                self._last_seq = seq
             elif self._last is None:
-                self._last = np.zeros((360, 640, 3), np.uint8)       # sem câmera: quadro preto
+                self._last = np.zeros((360, 640, 3), np.uint8)             # sem câmera: quadro preto
             frame = av.VideoFrame.from_ndarray(self._last, format="bgr24")
-            self._pts = getattr(self, "_pts", 0) + 90000 // fps
-            frame.pts = self._pts
+            t = time.perf_counter()
+            if self._pts0 is None:
+                self._pts0 = t
+            frame.pts = int((t - self._pts0) * 90000)                       # tempo real: sem deriva quando quadros são descartados
             frame.time_base = fractions.Fraction(1, 90000)
+            self.stats.record(t, (t - captured) if captured else 0.0, dropped=dropped, repeated=repeated)
             return frame
 
     class _MicTrack(MediaStreamTrack):
@@ -849,8 +1032,8 @@ def _track_classes():
     return _CameraTrack, _MicTrack
 
 
-def CameraTrack(provider, fps=lambda: VIDEO_FPS):
-    return _track_classes()[0](provider, fps)
+def CameraTrack(provider, fps=lambda: VIDEO_FPS, info_provider=None, stats=None):
+    return _track_classes()[0](provider, fps, info_provider, stats)
 
 
 def MicTrack(mic):

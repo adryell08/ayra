@@ -109,10 +109,16 @@ def available() -> Tuple[bool, str]:
     return True, ""
 
 
+_IDENT32 = np.tile(np.eye(4, dtype=np.float32), (32, 1, 1))
+
+
 class Body3D:
     def __init__(self, model: Path = MODEL, samples: int = 4):
         import moderngl
         self.mgl = moderngl
+        self._bones = np.zeros((32, 4, 4), np.float32)
+        self._bones_t = np.zeros((32, 4, 4), np.float32)
+        self._readbuf = None
         try:
             self.ctx = moderngl.create_standalone_context(require=330)
         except Exception:                                   # Linux sem tela (testes): EGL
@@ -207,11 +213,12 @@ class Body3D:
         self._face(face)
         pose = self.anim.pose(now, gaze, talk, reduce_motion)
         bob = 0.0 if reduce_motion else .006 * math.sin(now * 1.3)
-        bones = np.zeros((32, 4, 4), np.float32)
-        bones[:] = np.eye(4, dtype=np.float32)
+        bones = self._bones                                  # buffer reutilizado (sem alocar 32 matrizes por quadro)
+        bones[:] = _IDENT32
         M = self.rig.matrices(pose, bob)
         bones[:len(M)] = M
-        self.prog["bones"].write(np.ascontiguousarray(bones.transpose(0, 2, 1)).tobytes())
+        np.copyto(self._bones_t, bones.transpose(0, 2, 1))
+        self.prog["bones"].write(self._bones_t)
         eye, target = (0.0, -8.6, 2.30), (0.0, 0.0, 1.92)
         aspect = w / h
         half = max(1.95, 2.1 / aspect)                     # cabe dos braços abertos ao topo da cabeça
@@ -230,8 +237,12 @@ class Body3D:
         self.vao.render()
         if self.fbo_ms is not None:
             self.ctx.copy_framebuffer(self.fbo, self.fbo_ms)
-        data = self.fbo.read(components=3, alignment=1)
-        img = pygame.image.frombytes(data, (w, h), "RGB", True)
+        need = w * h * 3
+        if self._readbuf is None or len(self._readbuf) != need:
+            self._readbuf = bytearray(need)                  # buffer de leitura reutilizado enquanto o tamanho não muda
+        self.fbo.read_into(self._readbuf, components=3, alignment=1)
+        img = pygame.image.frombuffer(self._readbuf, (w, h), "RGB")
+        img = pygame.transform.flip(img, False, True)        # OpenGL lê de baixo para cima; o flip já devolve uma Surface independente do buffer
         self._adapt((time.perf_counter() - t_start) * 1000.0)
         return img
 

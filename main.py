@@ -420,8 +420,37 @@ def main(argv=None) -> int:
         except OSError:
             pass
 
+    rag_path = Path(__file__).resolve().parent / "rag.local.json"
+
+    def rag_read():
+        try:
+            data = _json.loads(rag_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def rag_toggle(key):
+        """Liga/desliga `rag_ligado` ou `rag_voz` em rag.local.json (preserva o resto). O assistente relê o arquivo sozinho."""
+        data = rag_read()
+        if key == "rag_voz" and data.get("rag_ligado") is not True:
+            toast("Ligue o RAG primeiro")
+            return
+        data[key] = data.get(key) is not True
+        if key == "rag_ligado" and not data[key]:
+            data["rag_voz"] = False
+        try:
+            rag_path.write_text(_json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        except OSError as error:
+            toast(f"Não foi possível gravar rag.local.json: {error}")
+            return
+        if key == "rag_ligado":
+            toast("RAG " + ("ligado: memória e fichas da Ayra entram quando a pergunta tem relação" if data[key] else "desligado"))
+        else:
+            toast("RAG por voz " + ("ligado: vale na próxima resposta" if data[key] else "desligado"))
+
     def audio_state():
-        hud.audio = dict(mode=hub.mode, label=audio_duplex.MODE_LABELS[hub.mode],
+        _rag = rag_read()
+        hud.audio = dict(rag=_rag.get("rag_ligado") is True, rag_voz=_rag.get("rag_voz") is True, mode=hub.mode, label=audio_duplex.MODE_LABELS[hub.mode],
                          continuous=bool(getattr(state_ref.get("assistant"), "continuous", False)),
                          memory=memory.active, memory_blocked=bool(args.sem_registro or args.sem_memoria),
                          memory_n=len(memory.list_active_instructions()) if memory.active else 0)
@@ -434,7 +463,7 @@ def main(argv=None) -> int:
     except (OSError, ValueError):
         remote_cfg = {}
     remote = dict(server=None, enabled=bool(remote_cfg.get("enabled", False)), port=int(remote_cfg.get("port", 8765)),
-                  fps=int(remote_cfg.get("fps", 10)) if int(remote_cfg.get("fps", 10)) in (5, 10, 15) else 10,
+                  fps=int(remote_cfg.get("fps", 10)) if int(remote_cfg.get("fps", 10)) in (5, 10, 15, 30) else 10,
                   pin=str(remote_cfg.get("pin", "")), badge=bool(remote_cfg.get("badge", True)), faces=0)
 
     def remote_save():
@@ -444,6 +473,17 @@ def main(argv=None) -> int:
                                        encoding="utf-8")
         except OSError:
             pass
+
+    def remote_frame_info():                  # (quadro, sequência, captura) sem cópia; a trilha descarta repetidos e mede a idade
+        if not using_sim and hasattr(src, "latest_frame_info"):
+            return src.latest_frame_info()
+        _sim_seq[0] += 1                      # simulação/imagem fixa: cada leitura conta como quadro novo
+        return remote_frame(), _sim_seq[0], time.perf_counter()
+    _sim_seq = [0]
+
+    def remote_on_fps(fps):                   # a câmera só entrega à sala a taxa que ela pede (30 reais precisam disso)
+        if hasattr(src, "set_operator_fps"):
+            src.set_operator_fps(fps)
 
     def remote_frame():                       # thread do servidor: lê o último quadro, sem disputar a foto da IA
         if not using_sim and hasattr(src, "latest_frame"):
@@ -472,7 +512,9 @@ def main(argv=None) -> int:
                                 lambda pcm: assistant.operator_audio(pcm) if hasattr(assistant, "operator_audio") else None,
                                 robot_muted=lambda: assistant.player.pending() > 0 if hasattr(assistant.player, "pending") else False,
                                 port=remote["port"], pin=remote["pin"], fps=remote["fps"],
-                                mic_factory=lambda: HubMic(hub))
+                                mic_factory=lambda: HubMic(hub),
+                                frame_info_provider=remote_frame_info,
+                                on_fps=remote_on_fps)
         server.memory = memory                    # painel /memoria (mesmo PIN)
         server.rag_provider = lambda: assistant.rag_assembler() if hasattr(assistant, "rag_assembler") else None     # painel /rag (métricas, sem texto)
         if server.start():
@@ -510,7 +552,7 @@ def main(argv=None) -> int:
         elif name == "kick" and remote["server"]:
             remote["server"].disconnect_operator()
         elif name == "fps":
-            remote["fps"] = {5: 10, 10: 15, 15: 5}.get(remote["fps"], 10)
+            remote["fps"] = {5: 10, 10: 15, 15: 30, 30: 5}.get(remote["fps"], 10)
             if remote["server"]:
                 remote["server"].fps = remote["fps"]           # vale na hora, sem reconectar
             remote_save()
@@ -899,6 +941,28 @@ def main(argv=None) -> int:
                             assistant.memory_note(result[1])
                         toast("Memória atualizada")
                         audio_state()
+                    elif result and result[0] == "copy":
+                        md = historico.to_markdown(result[1])
+                        if not md:
+                            toast("Conversa vazia: nada para copiar")
+                        else:
+                            saved = ""
+                            try:
+                                out_dir = LOG_DIR / "exportacoes"
+                                out_dir.mkdir(parents=True, exist_ok=True)
+                                (out_dir / f"conversa_{result[1]}.md").write_text(md, encoding="utf-8")
+                                saved = f"logs/exportacoes/conversa_{result[1]}.md"
+                            except OSError:
+                                pass
+                            copied = False
+                            try:
+                                pygame.scrap.init()
+                                pygame.scrap.put_text(md)
+                                copied = True
+                            except Exception:
+                                pass
+                            toast("Conversa copiada (.md)" + (f" e salva em {saved}" if saved else "") if copied else
+                                  (f"Não consegui copiar; salva em {saved}" if saved else "Não foi possível copiar nem salvar"))
                     elif result and result[0] == "delete":
                         if result[1] == getattr(assistant, "session_id", None):
                             assistant.new_conversation()
@@ -948,6 +1012,10 @@ def main(argv=None) -> int:
                                 memory._init_db()
                             audio_save()
                             toast("Memória " + ("ligada: instruções e preferências ficam salvas" if memory.active else "desligada"))
+                    elif name == "rag":
+                        rag_toggle("rag_ligado")
+                    elif name == "ragvoz":
+                        rag_toggle("rag_voz")
                     elif name == "forget":
                         if time.perf_counter() - forget_armed["t"] < 6.0:
                             forget_armed["t"] = 0.0
