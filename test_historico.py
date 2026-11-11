@@ -31,6 +31,7 @@ def test_store():
     print("Histórico: leitura, busca, apagar")
     d = Path(tempfile.mkdtemp())
     check("sem arquivo: lista vazia", historico.list_sessions(log_dir=d) == [])
+    check("exportar conversa inexistente: vazio", historico.to_markdown("X", log_dir=d) == "")
     write(d, [
         dict(quando="2026-10-28 10:00:00", sessao="A", pergunta="Que cor é a camisa?", resposta="Azul."),
         dict(quando="2026-10-28 10:01:00", sessao="A", pergunta="E a parede?", resposta="Branca."),
@@ -47,6 +48,10 @@ def test_store():
           and [r["id"] for r in historico.list_sessions("ayra", log_dir=d)] == ["B"]
           and historico.list_sessions("inexistente", log_dir=d) == [])
     check("carrega as trocas em ordem", historico.load("A", d) == [("Que cor é a camisa?", "Azul."), ("E a parede?", "Branca.")])
+    md = historico.to_markdown("A", d)
+    check("exporta só aquela conversa em Markdown, em ordem, sem a outra",
+          md.startswith("# Conversa A") and "**Pessoa:** Que cor é a camisa?" in md and "**Ayra:** Branca." in md
+          and md.index("camisa") < md.index("parede") and "Sou a Ayra" not in md and "Troca 2" in md)
     check("apagar remove só aquela conversa e devolve quantos registros",
           historico.delete("A", d) == 2 and [r["id"] for r in historico.list_sessions(log_dir=d)] == ["B", "legado-2026-10-27"])
     check("linha corrompida não derruba a leitura", True)
@@ -194,6 +199,11 @@ def test_tela_conversas():
             for typ in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
                 out = c.handle_event(pygame.event.Event(typ, button=1, pos=rect.center))
             return out
+        c.draw(r, "")
+        sid0 = c.selected["id"]
+        check("Copiar .md devolve a ação com a conversa selecionada, sem fechar a tela",
+              click(c.copy_btn) == ("copy", sid0) and c.active)
+        c.draw(r, "")
         check("Apagar pede confirmação (1º toque não apaga)", click(c.delete_btn) is None and c.confirm_delete)
         c.draw(r, "")
         sid = c.selected["id"]

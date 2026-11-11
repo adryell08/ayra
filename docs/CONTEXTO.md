@@ -67,7 +67,7 @@ no computador real. Detalhes de uso ficam no `README.md`; detalhes técnicos, no
 - Modos **Autônomo**, **Assistido** e **Teleoperado**; voz ao vivo (segurar ou travar), frase digitada, expressões, 13 gestos,
   olhar clicando no vídeo, corpo 3D, visão da IA, voz robótica, latência.
 - Vídeo a **10 quadros/s** (5 ou 15 disponíveis). Página adaptada ao celular.
-- Nada na tela do robô revela o operador (o selo “Operador conectado” foi removido; a conexão aparece só na sala do operador e em Ajustes → Conexões).
+- Nada na tela do robô revela o operador (o selo “Operador conectado” é opcional e pode ser desligado).
 - Internet: mesma página por VPN (ex.: Tailscale), sem mudar código.
 
 ### 3.4 Rosto, corpo e percepção

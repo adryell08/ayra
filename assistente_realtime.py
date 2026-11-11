@@ -29,6 +29,7 @@ import numpy as np
 import credenciais
 import ia
 import realtime as rt
+import conhecimento
 from contexto import CONFIG_PATH as RAG_CONFIG_PATH, RESULTADO_LIMITE, TOOL_LEMBRAR, ContextAssembler, RagConfig, executar_lembrar
 from assistente import Assistant
 from gestos import GESTURES
@@ -380,12 +381,17 @@ class RealtimeAssistant(Assistant):
         """Texto recuperado da memória para a pergunta digitada (rotulado como DADO), ou None. A voz não faz isso: ela usa `lembrar`."""
         asm = self.rag_assembler()
         m = self._mem()
-        if asm is None or m is None or not asm.cfg.rag_ligado:
+        if asm is None or not asm.cfg.rag_ligado:
             return None
-        pkt = asm.montar(m.user_id, self.session_id, question, cancelado=lambda: not self._alive(gen))
-        if not self._alive(gen) or not pkt.fontes:
+        fichas = conhecimento.texto_para_contexto(conhecimento.buscar(question))      # base da Ayra sobre si mesma (local, sem API)
+        mem_txt = None
+        if m is not None:
+            pkt = asm.montar(m.user_id, self.session_id, question, cancelado=lambda: not self._alive(gen))
+            if self._alive(gen) and pkt.fontes:
+                mem_txt = pkt.itens_texto[-1]
+        if not self._alive(gen):
             return None
-        return pkt.itens_texto[-1]
+        return " ".join(t for t in (fichas, mem_txt) if t) or None
 
     def _send_memory_context(self, handoff: bool, client=None) -> None:
         m = self._mem()
@@ -891,13 +897,17 @@ class RealtimeAssistant(Assistant):
         excluir = (turn.get("question"),)
 
         def work():
+            fichas = conhecimento.buscar(consulta) if (asm is not None and asm.cfg.rag_ligado) else []
             if asm is None:
                 call["result"] = dict(itens=[], motivo_fallback="memoria_indisponivel", nada_encontrado=True)
                 return
             try:
-                call["result"] = executar_lembrar(asm, usuario, consulta, lambda: (not self._alive(gen)) or bool(turn.get("interrupted")), excluir)
+                res = executar_lembrar(asm, usuario, consulta, lambda: (not self._alive(gen)) or bool(turn.get("interrupted")), excluir)
             except Exception:
-                call["result"] = dict(itens=[], motivo_fallback="erro_recuperacao", nada_encontrado=True)
+                res = dict(itens=[], motivo_fallback="erro_recuperacao", nada_encontrado=True)
+            if fichas:
+                res = dict(res, itens=fichas + list(res.get("itens", [])), nada_encontrado=False)
+            call["result"] = res
         call["thread"] = threading.Thread(target=work, name="lembrar", daemon=True)
         call["thread"].start()
 
@@ -907,13 +917,18 @@ class RealtimeAssistant(Assistant):
         gen = turn.get("gen", -1)
         m = self._mem()
         asm = self.rag_assembler()
-        if m is None or asm is None:
+        if asm is None:
             return dict(itens=[], motivo_fallback="memoria_indisponivel", nada_encontrado=True)
         n = turn["lembrar_n"] = turn.get("lembrar_n", 0) + 1
         if n > asm.cfg.max_continuacoes_lembrar:
             return dict(RESULTADO_LIMITE)
         consulta = " ".join(str((args or {}).get("consulta", "")).split())[:200]
-        return executar_lembrar(asm, m.user_id, consulta, lambda: (not self._alive(gen)) or bool(turn.get("interrupted")), (turn.get("question"),))
+        fichas = conhecimento.buscar(consulta) if asm.cfg.rag_ligado else []
+        res = executar_lembrar(asm, m.user_id if m is not None else None, consulta,
+                               lambda: (not self._alive(gen)) or bool(turn.get("interrupted")), (turn.get("question"),))
+        if fichas:
+            res = dict(res, itens=fichas + list(res.get("itens", [])), nada_encontrado=False)
+        return res
 
     def _call_face(self, call_id, name, args) -> None:
         call = self._calls[call_id] = dict(name=name, needs_response=True)

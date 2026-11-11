@@ -28,6 +28,7 @@ class ChatHistory:
         self.new_btn = pygame.Rect(0, 0, 0, 0)
         self.resume_btn = pygame.Rect(0, 0, 0, 0)
         self.delete_btn = pygame.Rect(0, 0, 0, 0)
+        self.copy_btn = pygame.Rect(0, 0, 0, 0)
         self.list_rect = pygame.Rect(0, 0, 0, 0)
         self.chat_rect = pygame.Rect(0, 0, 0, 0)
         self.rows: List[Tuple[pygame.Rect, dict]] = []
@@ -152,6 +153,8 @@ class ChatHistory:
                 return self._mem_action(hit[1], hit[2], hit[3])
             if hit == "new":
                 return self._finish("new")
+            if hit == "copy" and self.selected:
+                return ("copy", self.selected["id"])
             if hit == "resume" and self.selected:
                 return self._finish("resume")
             if hit == "delete" and self.selected:
@@ -185,7 +188,7 @@ class ChatHistory:
                     return ("mem", kind, ident, text)
             return None
         for name, rect in (("close", self.close_btn), ("new", self.new_btn),
-                           ("resume", self.resume_btn), ("delete", self.delete_btn)):
+                           ("resume", self.resume_btn), ("delete", self.delete_btn), ("copy", self.copy_btn)):
             if rect.w and rect.collidepoint(pos):
                 return name
         if self.list_rect.collidepoint(pos):
@@ -238,7 +241,7 @@ class ChatHistory:
         sc, s, scr = r.scheme, r.s, r.screen
         pad = int(theme.PADDING * s)
         self.mem_rect, self.mem_rows = area, []
-        self.new_btn = self.resume_btn = self.delete_btn = pygame.Rect(0, 0, 0, 0)
+        self.new_btn = self.resume_btn = self.delete_btn = self.copy_btn = pygame.Rect(0, 0, 0, 0)
         if not self._mem_ready():
             for i, line in enumerate(r._wrap("body", "Memória desligada. Ligue em Ajustes → Conversa e IA → Memória "
                                              "(ou o app foi aberto com --sem-registro/--sem-memoria).", area.w)):
@@ -382,16 +385,18 @@ class ChatHistory:
         bh = int(40 * s)
         head_h = bh + int(10 * s)
         if sel:
-            tt = r._text("headline", r._fit("headline", sel["title"], right.w - 2 * int(120 * s) - pad), sc.text)
+            tt = r._text("headline", r._fit("headline", sel["title"], right.w - 3 * int(120 * s) - pad), sc.text)
             scr.blit(tt, (right.x, right.y + (bh - tt.get_height()) // 2))
             bw = int(112 * s)
             self.delete_btn = pygame.Rect(right.right - bw, right.y, bw, bh)
             self.resume_btn = pygame.Rect(self.delete_btn.x - bw - int(8 * s), right.y, bw, bh)
+            self.copy_btn = pygame.Rect(self.resume_btn.x - bw - int(8 * s), right.y, bw, bh)
+            self._button(r, self.copy_btn, "Copiar .md", "copy", False)
             self._button(r, self.resume_btn, "Retomar", "resume", True)
             self._button(r, self.delete_btn, "Apagar?" if self.confirm_delete else "Apagar", "delete", False,
                          danger=self.confirm_delete)
         else:
-            self.resume_btn = self.delete_btn = pygame.Rect(0, 0, 0, 0)
+            self.resume_btn = self.delete_btn = self.copy_btn = pygame.Rect(0, 0, 0, 0)
         self.chat_rect = pygame.Rect(right.x, right.y + head_h, right.w, right.h - head_h)
         if not sel:
             msg = r._text("body", "Selecione uma conversa para ver as mensagens.", sc.text_dim)

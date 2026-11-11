@@ -90,6 +90,35 @@ def load(session_id: str, log_dir: Optional[Path] = None) -> List[Tuple[str, str
             for r in _read(log_dir) if _is_turn(r) and _sid(r) == session_id]
 
 
+def to_markdown(session_id: str, log_dir: Optional[Path] = None) -> str:
+    """Conversa em Markdown para colar numa revisão: trocas em ordem, com emoção, ação, modelo, tempos e avisos de cada resposta."""
+    rows = [r for r in _read(log_dir) if _is_turn(r) and _sid(r) == session_id]
+    if not rows:
+        return ""
+    out = [f"# Conversa {session_id}", "", f"- Início: {rows[0].get('quando', '')}", f"- Trocas: {len(rows)}", ""]
+    for i, r in enumerate(rows, 1):
+        out += [f"## Troca {i} · {r.get('quando', '')}", ""]
+        if (r.get("pergunta") or "").strip():
+            out += [f"**Pessoa:** {r['pergunta'].strip()}", ""]
+        if (r.get("resposta") or "").strip():
+            out += [f"**Ayra:** {r['resposta'].strip()}", ""]
+        meta = []
+        if r.get("emocao"):
+            meta.append(f"emoção={r['emocao']}")
+        if r.get("acao"):
+            meta.append(f"ação={r['acao']}")
+        if r.get("modelo"):
+            meta.append(f"modelo={r['modelo']}")
+        t = r.get("tempos")
+        if isinstance(t, dict) and t:
+            meta.append("tempos(s): " + ", ".join(f"{k}={v}" for k, v in t.items()))
+        if r.get("aviso"):
+            meta.append(f"aviso={r['aviso']}")
+        if meta:
+            out += ["_" + " · ".join(meta) + "_", ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
 def delete(session_id: str, log_dir: Optional[Path] = None) -> int:
     """Remove a conversa do arquivo (reescrita atômica). Devolve quantos registros saíram."""
     path = _path(log_dir)
