@@ -515,6 +515,7 @@ def main(argv=None) -> int:
                                 mic_factory=lambda: HubMic(hub),
                                 frame_info_provider=remote_frame_info,
                                 on_fps=remote_on_fps)
+        server.on_mic_gain = lambda pct: credenciais.set_env_values({"NURIA_GANHO_MIC_OPERADOR": str(pct)})
         server.memory = memory                    # painel /memoria (mesmo PIN)
         server.rag_provider = lambda: assistant.rag_assembler() if hasattr(assistant, "rag_assembler") else None     # painel /rag (métricas, sem texto)
         if server.start():

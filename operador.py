@@ -120,7 +120,34 @@ VIDEO_FPS = 10                         # padrão (5, 10, 15 ou 30 em Ajustes →
 FPS_CHOICES = (5, 10, 15, 30)
 VIDEO_MAX_WIDTH = 640                  # largura máxima enviada (mais que isso só gasta CPU na codificação)
 AUDIO_RATE = 48000                      # WebRTC (Opus) trabalha a 48 kHz
-COMMANDS = ("mode", "say", "instruction", "expression", "gesture", "body", "look", "vision", "robot_voice", "interrupt", "ptt", "ping")
+COMMANDS = ("mode", "say", "instruction", "expression", "gesture", "body", "look", "vision", "robot_voice", "interrupt", "ptt", "ping", "mic_gain")
+
+MIC_GAIN_MIN, MIC_GAIN_MAX, MIC_GAIN_DEFAULT = 100, 500, 200     # % (100 = sem amplificar)
+
+
+def mic_gain_clamp(percent) -> int:
+    try:
+        return max(MIC_GAIN_MIN, min(MIC_GAIN_MAX, int(round(float(percent)))))
+    except (TypeError, ValueError):
+        return MIC_GAIN_DEFAULT
+
+
+def apply_mic_gain(pcm: np.ndarray, percent: int) -> np.ndarray:
+    """Amplifica o microfone do operador (amostras em escala int16, float32) com limitador suave.
+
+    Abaixo de ~60 % da escala o sinal só é multiplicado (sem distorção); acima disso um joelho `tanh` achata os picos em vez de cortar
+    (sem estalos). 100 % devolve o sinal sem alteração."""
+    g = mic_gain_clamp(percent) / 100.0
+    if g <= 1.0:
+        return pcm
+    y = pcm * g
+    knee = 0.6 * 32768.0
+    over = np.abs(y) > knee
+    if over.any():
+        head = 32767.0 - knee
+        excess = (np.abs(y[over]) - knee) / head
+        y[over] = np.sign(y[over]) * (knee + head * np.tanh(excess))
+    return y
 
 
 def lan_ip() -> str:
@@ -308,6 +335,8 @@ class OperatorServer:
         self.operator = ""                       # nome/endereço do operador conectado
         self.rtt_ms: Optional[float] = None
         self.ptt = False
+        self.mic_gain = mic_gain_clamp(os.environ.get("NURIA_GANHO_MIC_OPERADOR", MIC_GAIN_DEFAULT) or MIC_GAIN_DEFAULT)
+        self.on_mic_gain = None                  # (percent) -> grava no .env (definido pelo app)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._runner = None
@@ -853,7 +882,7 @@ class OperatorServer:
                 pcm = pcm * 32767.0
             if rs is None or rs_rate != frame.sample_rate:          # reamostragem contínua (sem cliques entre blocos)
                 rs, rs_rate = StreamResampler(frame.sample_rate, 24000), frame.sample_rate
-            mono = np.clip(rs.process(pcm), -32768, 32767).astype(np.int16)
+            mono = np.clip(apply_mic_gain(rs.process(pcm), self.mic_gain), -32768, 32767).astype(np.int16)
             try:
                 self._voice_q.put_nowait(mono)                     # vocoder/alto-falante rodam em outra thread
             except queue.Full:
@@ -890,6 +919,14 @@ class OperatorServer:
             if isinstance(data.get("rtt"), (int, float)):
                 self.rtt_ms = float(data["rtt"])
             return
+        if kind == "mic_gain":                                  # local: não passa pela fila do robô nem aparece na tela dele
+            self.mic_gain = mic_gain_clamp(data.get("nivel", self.mic_gain))
+            if data.get("final", True) and self.on_mic_gain is not None:
+                try:
+                    self.on_mic_gain(self.mic_gain)
+                except Exception:
+                    pass
+            return
         if kind == "ptt":
             self.ptt = bool(data.get("ligado"))
         self._push((kind, data))
@@ -910,6 +947,7 @@ class OperatorServer:
                     payload["tipo"] = "estado"
                     payload["fps"] = self._fps
                     payload["fps_teto"] = self._fps_cap
+                    payload["ganho_mic"] = self.mic_gain
                     payload["video"] = getattr(self, "_video_snap", {})
                     self._send_now(payload)
                 except Exception:

@@ -232,6 +232,14 @@
         <label class="sr" for="robotLevel">Voz artificial (0 a 100 %)</label>
         <input type="range" id="robotLevel" min="0" max="100" step="5" value="0" aria-valuetext="0 %">
         <output id="robotVal" for="robotLevel">0 %</output></div>
+      <div class="robotRow"><span aria-hidden="true">🎤</span>
+        <label class="sr" for="micGain">Ganho do seu microfone (100 a 500 %)</label>
+        <input type="range" id="micGain" min="100" max="500" step="25" value="200" aria-valuetext="200 %">
+        <output id="micGainVal" for="micGain">200 %</output></div>
+      <div class="robotRow"><span aria-hidden="true">🔊</span>
+        <label class="sr" for="listenGain">Volume de escuta (100 a 400 %)</label>
+        <input type="range" id="listenGain" min="100" max="400" step="25" value="200" aria-valuetext="200 %">
+        <output id="listenVal" for="listenGain">200 %</output></div>
       <p id="voiceNote"></p>
       <p id="voiceDiag" class="sr"></p>
     </section>
@@ -327,6 +335,21 @@ function meter(stream, w) {
     an.fftSize = 512; src.connect(an); w.an = an; w.buf = new Uint8Array(an.fftSize);
   } catch (e) { /* medidor é opcional */ }
 }
+// Volume de escuta (o que o operador ouve do usuário): 100–400 % por GainNode + compressor (o <audio> só chega a 100 %).
+let listenCtx = null, listenGain = null, listenPct = 200;
+function listenBoost(stream) {
+  try {
+    if (listenCtx) { listenCtx.close(); listenCtx = null; }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream), g = ctx.createGain(), comp = ctx.createDynamicsCompressor();
+    g.gain.value = listenPct / 100; comp.threshold.value = -12; comp.ratio.value = 6;
+    src.connect(g); g.connect(comp); comp.connect(ctx.destination);
+    $("robotAudio").muted = true;                       // o som sai pelo caminho amplificado (o elemento fica ligado ao fluxo)
+    listenCtx = ctx; listenGain = g;
+    const wake = () => { if (ctx.state === "suspended") ctx.resume(); };
+    document.addEventListener("pointerdown", wake); document.addEventListener("keydown", wake); wake();
+  } catch (e) { $("robotAudio").muted = false; }       // sem Web Audio: volta ao som normal
+}
 function drawWave(w) {
   const c = w.el, W = c.clientWidth, H = c.clientHeight;
   if (!W) return;
@@ -354,7 +377,7 @@ async function conecta() {
   p.addTransceiver("video", { direction: "recvonly" });
   p.ontrack = (ev) => {
     if (ev.track.kind === "video") { $("video").srcObject = new MediaStream([ev.track]); }
-    else { const s = new MediaStream([ev.track]); $("robotAudio").srcObject = s; meter(s, waves.robot); }
+    else { const s = new MediaStream([ev.track]); $("robotAudio").srcObject = s; meter(s, waves.robot); listenBoost(s); }
   };
   p.onconnectionstatechange = () => { if (p === pc && ["failed", "closed"].includes(p.connectionState)) rc.caiu("ice"); };
   ch.onmessage = (ev) => { if (ch !== dc) return; rc.viuMensagem(); onMessage(JSON.parse(ev.data)); };
@@ -442,6 +465,7 @@ function onMessage(m) {
   if (m.visao !== undefined && isOn($("vision")) !== !!m.visao) { $("vision").setAttribute("aria-checked", String(!!m.visao)); drawControls(); }
   if (m.corpo3d !== undefined) switchLabel($("body3d"), "Corpo 3D", !!m.corpo3d);
   if (m.voz_robotica_nivel !== undefined && !robotDrag) showLevel(m.voz_robotica_nivel);
+  if (m.ganho_mic !== undefined && !micGainDrag) showMicGain(m.ganho_mic);
   voiceInfo(m.voz_perfil, m.voz_diag);
   $("gest").textContent = m.gesto || "—";
   if (m.fps) {
@@ -453,6 +477,11 @@ function onMessage(m) {
   $("audioInfo").textContent = (eco || "—") + (m.continua ? " · conversa contínua" : "");
 }
 
+let micGainDrag = false, micGainLast = 0;
+function showMicGain(n) {
+  $("micGain").value = n; $("micGainVal").textContent = n + " %";
+  $("micGain").setAttribute("aria-valuetext", n + " %");
+}
 function showLevel(n) {
   $("robotLevel").value = n; $("robotVal").textContent = n + " %";
   $("robotLevel").setAttribute("aria-valuetext", n + " %");
@@ -536,6 +565,21 @@ $("robotLevel").addEventListener("input", (e) => {
   if (performance.now() - robotLast > 120) { robotLast = performance.now(); send({ tipo: "robot_voice", nivel: +e.target.value, final: false }); }
 });
 $("robotLevel").addEventListener("change", (e) => { robotDrag = false; send({ tipo: "robot_voice", nivel: +e.target.value, final: true }); });
+
+$("micGain").addEventListener("input", (e) => {
+  micGainDrag = true; showMicGain(+e.target.value);
+  if (performance.now() - micGainLast > 120) { micGainLast = performance.now(); send({ tipo: "mic_gain", nivel: +e.target.value, final: false }); }
+});
+$("micGain").addEventListener("change", (e) => { micGainDrag = false; send({ tipo: "mic_gain", nivel: +e.target.value, final: true }); });
+
+function showListen(n) {
+  $("listenGain").value = n; $("listenVal").textContent = n + " %"; $("listenGain").setAttribute("aria-valuetext", n + " %");
+}
+showListen(listenPct);
+$("listenGain").addEventListener("input", (e) => {
+  listenPct = +e.target.value; showListen(listenPct);
+  if (listenGain) listenGain.gain.value = listenPct / 100;
+});
 
 const talkBtn = $("talk");
 talkBtn.addEventListener("pointerdown", (e) => {
